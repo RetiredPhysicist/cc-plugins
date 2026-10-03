@@ -15,6 +15,9 @@
 
 import { DEFAULT_CONFIG, configPath, parseConfig, serializeConfig } from "./config.js";
 import { averageMs, createCounters, createTracker, recordCompletion, suggestion } from "./activity.js";
+import { COMPANION_KEY, classify, describe as describeCompanion, emptyCompanion, feed, normalizeCompanion } from "./companion.js";
+import { createLens, describe as describeLens, sample } from "./lens.js";
+import { describe as describeQueue, dequeue, emptyQueue, enqueue, move as moveQueue, removeAt } from "./queue.js";
 import { bar, contextLevel, fmtDuration, fmtRate, fmtTokens, summarize, tokensPerSecond } from "./format.js";
 import { LEDGER_KEY, cacheHitRatio, dayTotal, emptyLedger, normalizeLedger, recordTurn, recentTotal } from "./ledger.js";
 import { accumulate, createRing, emptyTotals, startRequest } from "./metrics.js";
@@ -37,6 +40,9 @@ let config = { ...DEFAULT_CONFIG };
 let tools = createTracker(20);
 let agents = createTracker(10);
 let counters = createCounters();
+let companion = emptyCompanion();
+let lens = createLens();
+let queue = emptyQueue();
 
 function resetSession() {
   totals = emptyTotals();
@@ -49,6 +55,8 @@ function resetSession() {
   tools = createTracker(20);
   agents = createTracker(10);
   counters = createCounters();
+  lens = createLens();
+  queue = emptyQueue();
 }
 
 /** Latest TTFT across recorded requests, or null. */
@@ -111,6 +119,9 @@ function bandRows(Box, Text) {
     ...activityRow(Box, Text),
     ...countersRow(Box, Text),
     ...agentsRow(Box, Text),
+    ...queueRow(Box, Text),
+    ...companionRow(Box, Text),
+    ...lensRow(Box, Text),
     ...hintRow(Box, Text),
   ];
 }
@@ -303,6 +314,33 @@ function hintRow(Box, Text) {
   return row(Box, Text, "hint", [Text({ key: "hint-text", color: COLOR.warm, children: [hint] })]);
 }
 
+/** ▸ the next prompt waiting to be sent (+2) */
+function queueRow(Box, Text) {
+  if (!config.queue) return [];
+  const line = describeQueue(queue);
+  if (!line) return [];
+  return row(Box, Text, "queue", [Text({ key: "queue-text", color: COLOR.cool, children: [line] })]);
+}
+
+/** (•‿•) Lv3 ✔4 ⎇2 */
+function companionRow(Box, Text) {
+  if (!config.companion) return [];
+  if (companion.xp <= 0) return [];
+  return row(Box, Text, "companion", [
+    Text({ key: "pet", color: COLOR.accent, children: [describeCompanion(companion)] }),
+  ]);
+}
+
+/** ⊡ +2.4%/turn · ~7 turns left */
+function lensRow(Box, Text) {
+  if (!config.lens) return [];
+  const used = contextPercent();
+  if (used === null) return [];
+  const line = describeLens(lens, used);
+  if (!line) return [];
+  return row(Box, Text, "lens", [Text({ key: "lens-text", color: COLOR.muted, children: [line] })]);
+}
+
 let lastCwd = null;
 let lastGit = null;
 let home = "";
@@ -458,6 +496,8 @@ export function register(on) {
 
     const saved = await $.store.get(LEDGER_KEY);
     ledger = normalizeLedger(saved);
+    const savedPet = await $.store.get(COMPANION_KEY);
+    companion = normalizeCompanion(savedPet);
 
     await $.command.register({
       name: "shannon",
@@ -470,6 +510,21 @@ export function register(on) {
     await $.command.register({
       name: "shannon-rain",
       description: "Turn the matrix rain on or off",
+    });
+    await $.command.register({
+      name: "shannon-toggle",
+      description: "Turn a feature on or off: companion, lens, queue",
+      argumentHint: "<companion|lens|queue>",
+    });
+    await $.command.register({
+      name: "q",
+      description: "Queue a prompt to send when this turn ends",
+      argumentHint: "<text>",
+    });
+    await $.command.register({
+      name: "shannon-queue",
+      description: "Show or manage the queued prompts: list, drop <n>, up <n>, down <n>",
+      argumentHint: "[list|drop n|up n|down n]",
     });
 
     // The rain moves, so the band needs a redraw on a timer.
@@ -537,6 +592,22 @@ export function register(on) {
       totalMs: e.durationMs ?? null,
     }, turnToolCount);
     $.ui.invalidate("ui.render");
+
+    // A queued prompt goes out when the turn ends. Submitting it here is safe
+    // because the session is idle at this point.
+    if (config.queue && queue.length) {
+      const queued = dequeue(queue);
+      queue = queued.queue;
+      if (queued.text) {
+        try {
+          await $.prompt.submit({ text: queued.text });
+        } catch {
+          // If it cannot be sent, it goes back to the front rather than
+          // disappearing.
+          queue = [queued.text, ...queue];
+        }
+      }
+    }
     return next(e);
   });
 
@@ -548,6 +619,9 @@ export function register(on) {
         percent: usage.context.percent ?? null,
         window: usage.context.window ?? lastContext?.window ?? null,
       };
+      // Each reading feeds the growth estimate, which is what turns a bare
+      // percentage into "how many turns are left".
+      if (lastContext.percent !== null) lens = sample(lens, lastContext.percent);
       $.ui.invalidate("ui.render");
     }
     return next(e);
@@ -566,7 +640,9 @@ export function register(on) {
       target: summarizeTarget(e),
     };
     runningTools = [...runningTools, entry];
-    tools.add(entry.id, { name: entry.name, target: entry.target });
+    // The command is kept so the companion can tell a test run from any other
+    // Bash call once the tool finishes.
+    tools.add(entry.id, { name: entry.name, target: entry.target, command: e.command ?? "" });
     turnToolCount += 1;
     $.ui.invalidate("ui.render");
 
@@ -587,11 +663,22 @@ export function register(on) {
       runningTools = runningTools.filter((item) => item.id !== entry.id);
       const finished = tools.remove(entry.id);
       if (finished) {
+        const succeeded = !(result?.isError || result?.deny);
         counters = recordCompletion(counters, {
           durationMs: Date.now() - finished.at,
-          failed: Boolean(result?.isError || result?.deny),
+          failed: !succeeded,
           label: finished.target ? `${finished.name}: ${finished.target}` : finished.name,
         });
+
+        // A passing test run or a commit feeds the companion. A failure does
+        // not, so a red build never grows it.
+        if (config.companion && finished.name === "Bash") {
+          const kind = classify(finished.command);
+          if (kind) {
+            companion = feed(companion, kind, { succeeded });
+            await $.store.set(COMPANION_KEY, companion);
+          }
+        }
       }
       $.ui.invalidate("ui.render");
     }
@@ -639,6 +726,55 @@ export function register(on) {
     }
     $.ui.invalidate("ui.render");
     return { text: `cc-shannon rain is now ${config.rain ? "on" : "off"}.` };
+  });
+
+  on("command.run", { command: "shannon-toggle" }, async ($, e) => {
+    const name = String(e.args ?? "").trim();
+    if (!(name in DEFAULT_CONFIG)) {
+      return { text: `Usage: /shannon-toggle <${Object.keys(DEFAULT_CONFIG).join("|")}>` };
+    }
+    config = { ...config, [name]: !config[name] };
+    try {
+      await $.fs.write(configFile(home), serializeConfig(config));
+    } catch {
+      // Applies for this session even when it cannot be persisted.
+    }
+    $.ui.invalidate("ui.render");
+    return { text: `cc-shannon ${name} is now ${config[name] ? "on" : "off"}.` };
+  });
+
+  // Queue a prompt while Claude is still working. It is sent when the turn ends.
+  on("command.run", { command: "q" }, async ($, e) => {
+    if (!config.queue) {
+      return { text: "The queue is off. /shannon-toggle queue turns it on." };
+    }
+    const next = enqueue(queue, e.args);
+    if (!next) {
+      return { text: "Nothing to queue, or the queue is full." };
+    }
+    queue = next;
+    $.ui.invalidate("ui.render");
+    return { text: `Queued (${queue.length}): ${queue[queue.length - 1]}` };
+  });
+
+  on("command.run", { command: "shannon-queue" }, async ($, e) => {
+    const args = String(e.args ?? "").trim();
+    const [action, rawIndex] = args.split(/\s+/);
+    const index = Number(rawIndex) - 1;
+
+    if (action === "drop") {
+      queue = removeAt(queue, index);
+      $.ui.invalidate("ui.render");
+      return { text: `Queue: ${queue.length} waiting.` };
+    }
+    if (action === "up" || action === "down") {
+      queue = moveQueue(queue, index, action);
+      $.ui.invalidate("ui.render");
+      return { text: `Queue: ${queue.length} waiting.` };
+    }
+    if (!queue.length) return { text: "The queue is empty." };
+    const list = queue.map((item, i) => `${i + 1}. ${item}`).join("\n");
+    return { text: `${queue.length} queued:\n${list}` };
   });
 
   // ── drawing ──

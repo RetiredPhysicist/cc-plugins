@@ -31,8 +31,8 @@ function stubBase(
         : { exitCode: 0, stdout: "", stderr: "" },
   }));
   on("session.end", () => ({}));
-  // `session.measure` cannot be stubbed by the test kit, so the context
-  // percentage is exercised through the usage API in a separate test.
+  // `session.measure` cannot be fired from the test kit; the context row is
+  // exercised through the request tokens instead.
   // The band composes with later mods by nesting the result of `next(e)`, so
   // that event needs an answer. Echoing the suffix lets a test see what the
   // spinner hook appended.
@@ -548,4 +548,172 @@ test("the ledger survives a new session", async ($, on) => {
   const today = JSON.stringify(await ui.find({ key: "row-today" }));
   expect(today).toContain("turns");
   await ui.unmount();
+});
+
+/** Mount the band, which is where the compact rows live. */
+async function mountBand($: any, rows = 8) {
+  return $.ui.mount({
+    plugin: "cc-shannon-mod",
+    surface: "terminal",
+    component: "AbovePrompt",
+    requestId: "band",
+    viewport: { columns: 120, rows: 40 },
+    props: {
+      hasSurvey: false,
+      isWorking: false,
+      maxRows: rows,
+      bodyColumns: 100,
+      scroll: { offset: 0, bodyRows: rows },
+      view: {},
+    },
+  });
+}
+
+test("a passing test run feeds the companion", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "npm test" });
+
+  const pet = saved.get("companion.v1") as any;
+  expect(pet).toBeDefined();
+  expect(pet.tests).toBe(1);
+  expect(pet.xp).toBe(1);
+
+  const band = await mountBand($);
+  const line = JSON.stringify(await band.find({ key: "row-companion" }));
+  expect(line).toContain("Lv1");
+  expect(line).toContain("✔1");
+  await band.unmount();
+});
+
+test("a failing test run does not feed the companion", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ isError: true, result: "1 failing" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "npm test" });
+
+  // The pet exists but did not grow: a red build is not food.
+  const pet = saved.get("companion.v1") as any;
+  expect(pet.xp).toBe(0);
+  expect(pet.tests).toBe(0);
+});
+
+test("a commit feeds the companion more than a test run", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "git commit -m 'green'" });
+
+  const pet = saved.get("companion.v1") as any;
+  expect(pet.commits).toBe(1);
+  expect(pet.xp).toBe(3);
+});
+
+test("the companion hides when it has never been fed", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const band = await mountBand($);
+  expect(await band.find({ key: "row-companion" })).toBeUndefined();
+  await band.unmount();
+});
+
+test("a queued prompt is listed and sent when the turn ends", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  const submitted: string[] = [];
+  on("prompt.submit", (_$, e: { text: string }) => {
+    submitted.push(e.text);
+    return { text: e.text };
+  });
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const queued = await $.command.run({ command: "q", args: "run the tests" });
+  expect(queued.text).toContain("Queued");
+
+  const band = await mountBand($);
+  const row = JSON.stringify(await band.find({ key: "row-queue" }));
+  expect(row).toContain("run the tests");
+  await band.unmount();
+
+  // Ending a turn releases one queued prompt.
+  await $.turn.complete({ turnId: "t1", answer: "", durationMs: 100, isAborted: false, usage: null });
+  expect(submitted).toContain("run the tests");
+});
+
+test("the queue can be viewed, reordered and dropped", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "q", args: "first" });
+  await $.command.run({ command: "q", args: "second" });
+
+  const list = await $.command.run({ command: "shannon-queue", args: "list" });
+  expect(list.text).toContain("first");
+  expect(list.text).toContain("second");
+
+  const moved = await $.command.run({ command: "shannon-queue", args: "up 2" });
+  expect(moved.text).toContain("2 waiting");
+
+  const band = await mountBand($);
+  const row = JSON.stringify(await band.find({ key: "row-queue" }));
+  // Moving item 2 up made "second" the head.
+  expect(row).toContain("second");
+  await band.unmount();
+
+  const dropped = await $.command.run({ command: "shannon-queue", args: "drop 1" });
+  expect(dropped.text).toContain("1 waiting");
+});
+
+test("the queue toggle turns queueing off", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "shannon-toggle", args: "queue" });
+  expect(answer.text).toContain("off");
+
+  const refused = await $.command.run({ command: "q", args: "nope" });
+  expect(refused.text).toContain("queue is off");
+});
+
+test("an unknown toggle name is reported instead of ignored", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "shannon-toggle", args: "nonsense" });
+  expect(answer.text).toContain("Usage");
+});
+
+test("the lens row stays hidden until growth is known", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+
+  // `session.measure` cannot be fired from the test kit, so the sampled
+  // history stays empty here. The row must not claim a runway it has not
+  // measured — the growth math itself is covered by the unit tests.
+  const band = await mountBand($);
+  expect(await band.find({ key: "row-lens" })).toBeUndefined();
+  await band.unmount();
 });

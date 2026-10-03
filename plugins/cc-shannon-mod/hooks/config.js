@@ -9,6 +9,12 @@
 export const DEFAULT_CONFIG = {
   /** Matrix rain strip down the left edge of the band. */
   rain: true,
+  /** The companion that grows as tests pass and commits land. */
+  companion: true,
+  /** Growth and runway for the context window. */
+  lens: true,
+  /** Queue prompts to send when the current turn ends. */
+  queue: true,
 };
 
 /** Where the config lives, alongside the statusline's own toggles under ~/.shannon. */
@@ -21,8 +27,10 @@ export function parseConfig(raw) {
   const config = { ...DEFAULT_CONFIG };
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && typeof parsed.rain === "boolean") {
-      config.rain = parsed.rain;
+    if (parsed && typeof parsed === "object") {
+      for (const key of Object.keys(DEFAULT_CONFIG)) {
+        if (typeof parsed[key] === "boolean") config[key] = parsed[key];
+      }
     }
   } catch {
     // An unreadable or malformed config keeps the defaults.
@@ -31,5 +39,7 @@ export function parseConfig(raw) {
 }
 
 export function serializeConfig(config) {
-  return `${JSON.stringify({ rain: config.rain }, null, 2)}\n`;
+  const out = {};
+  for (const key of Object.keys(DEFAULT_CONFIG)) out[key] = Boolean(config[key]);
+  return `${JSON.stringify(out, null, 2)}\n`;
 }
