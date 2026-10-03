@@ -194,10 +194,9 @@ function contextRow(Box, Text) {
     const level = contextLevel(used);
     const color =
       level === "critical" ? COLOR.danger : level === "warning" ? COLOR.warm : COLOR.positive;
-    parts.push(
-      Text({ key: "ctx", color: COLOR.cool, children: [ICON.context] }),
-      Text({ key: "ctx-bar", color, children: [`${bar(used, 10)} ${Math.round(used)}%`] }),
-    );
+    // The icon belongs with its value, so the separator only falls between
+    // distinct facts.
+    parts.push(Text({ key: "ctx", color, children: [`${ICON.context} ${bar(used, 10)} ${Math.round(used)}%`] }));
   }
 
   const latest = recent.latest();
