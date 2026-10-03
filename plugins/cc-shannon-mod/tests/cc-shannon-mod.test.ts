@@ -248,6 +248,9 @@ test("the guard blocks a risky command when refused", async ($, on) => {
   const result = await $.tool.call({ tool: "Bash", command: "git push --force origin main" });
 
   expect(result.deny).toContain("Blocked by cc-shannon guard");
+  // The refusal must tell the model a person declined, so it does not simply
+  // rewrite the command.
+  expect(result.deny).toContain("Do not retry it in another form");
 });
 
 test("the guard fails safe when nobody answers", async ($, on) => {

@@ -577,7 +577,7 @@ export function register(on) {
         if (decision) {
           guardEvents = [...guardEvents, decision].slice(-20);
           if (!decision.allowed) {
-            return { deny: `Blocked by cc-shannon guard: ${decision.reason}.` };
+            return { deny: `Blocked by cc-shannon guard: ${decision.reason}. ${decision.denial}` };
           }
         }
       }
@@ -687,17 +687,25 @@ async function guardCommand($, e) {
   if (!risks.length) return null;
 
   const reason = describeRisks(risks);
-  let answer = "Run it";
+  let answer = "Refuse";
+  let asked = false;
   try {
     answer = await $.ui.ask(
       `cc-shannon noticed ${reason}. Run this?\n\n${e.command}`,
       ["Run it", "Refuse"],
     );
+    asked = true;
   } catch {
     // Dismissed, or no one to ask (for example `claude -p`). Fail safe.
     answer = "Refuse";
   }
 
   const allowed = answer === "Run it";
-  return { allowed, reason };
+  // The denial text tells the model that a person refused, not that the syntax
+  // was rejected. Without that, a model simply rewrites the command and the
+  // deletion happens anyway.
+  const denial = asked
+    ? "The user declined this command. Do not retry it in another form; ask what they want instead."
+    : "No one was available to approve this command. Do not retry it in another form.";
+  return { allowed, reason, denial };
 }
