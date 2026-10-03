@@ -1,0 +1,54 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "cc-*-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve package from tag
+        id: package
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          package="${tag%-v*}"
+          version="${tag##*-v}"
+          test -d "packages/$package" || { echo "unknown package: $package" >&2; exit 1; }
+          node -e 'const p=require(process.argv[1]); const want=process.argv[2]; if (p.version !== want) { console.error(`version mismatch: ${p.version} != ${want}`); process.exit(1) }' "$PWD/packages/$package/package.json" "$version"
+          echo "name=$package" >> "$GITHUB_OUTPUT"
+          echo "dir=packages/$package" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: ${{ steps.package.outputs.dir }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else bun install; fi
+
+      - name: Build
+        working-directory: ${{ steps.package.outputs.dir }}
+        run: bun run build --if-present
+
+      - name: Typecheck
+        working-directory: ${{ steps.package.outputs.dir }}
+        run: bunx tsc --noEmit
+
+      - name: Publish
+        working-directory: ${{ steps.package.outputs.dir }}
+        run: npx npm@latest publish --access public

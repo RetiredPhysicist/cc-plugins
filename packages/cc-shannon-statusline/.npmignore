@@ -1,0 +1,11 @@
+# Exclude source files from npm package (only dist/ is needed)
+src/
+tsconfig.json
+.github/
+commands/
+*.test.ts
+*.spec.ts
+.eslintrc*
+.prettierrc*
+lefthook.yml
+biome.json

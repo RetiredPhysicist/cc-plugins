@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Pick changed packages
+        id: pick
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            packages=$(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            packages=$(git diff --name-only "$base" HEAD -- packages | cut -d/ -f2 | sort -u | paste -sd, -)
+          else
+            before="${{ github.event.before }}"
+            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              packages=$(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)
+            else
+              packages=$(git diff --name-only "$before" HEAD -- packages | cut -d/ -f2 | sort -u | paste -sd, -)
+            fi
+          fi
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          if [ -n "$packages" ]; then
+            json=$(printf '%s' "$packages" | jq -R -c 'split(",")')
+          else
+            json='[]'
+          fi
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          echo "Packages: ${packages:-none}"
+
+  test:
+    needs: changed
+    if: needs.changed.outputs.packages != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changed.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Prepare test home
+        run: mkdir -p "$HOME/.shannon" "$HOME/.claude"
+
+      - name: Install
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else bun install; fi
+
+      - name: Build
+        working-directory: packages/${{ matrix.package }}
+        run: bun run build --if-present
+
+      - name: Typecheck
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          if [ -f tsconfig.json ]; then bunx tsc --noEmit; fi
+
+      - name: Test
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          if npm run | grep -q '^  test:ci$'; then
+            npm run test:ci
+          else
+            bun test
+          fi
