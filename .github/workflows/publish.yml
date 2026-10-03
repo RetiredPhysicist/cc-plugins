@@ -43,7 +43,7 @@ jobs:
 
       - name: Build
         working-directory: ${{ steps.package.outputs.dir }}
-        run: bun run build --if-present
+        run: bun run build
 
       - name: Typecheck
         working-directory: ${{ steps.package.outputs.dir }}
