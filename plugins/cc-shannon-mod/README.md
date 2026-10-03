@@ -1,11 +1,13 @@
 # cc-shannon-mod
 
-Mission control for Claude Code, as a mod.
+The [cc-shannon-statusline](../cc-shannon-statusline) HUD, as a mod — plus what a
+statusline cannot do.
 
-A statusline is an external command: Claude Code hands it a JSON snapshot, and it
-has to reconstruct what happened by reading the transcript from disk. A mod runs
-inside Claude Code and sees the event stream. That difference is the whole point
-of this plugin — it **measures** turn timing instead of estimating it.
+It looks and reads the same: same palette, same icons, same separators, same
+matrix rain. What changes is where the numbers come from. A statusline is a
+subprocess that receives a JSON snapshot and reconstructs activity from the
+transcript, so its speed figures are estimates. A mod runs inside Claude Code and
+sees the response stream, so its timing is measured.
 
 ## Install
 
@@ -16,49 +18,53 @@ claude plugin install cc-shannon-mod@cc-plugins
 
 Then run `/reload-plugins`, or start a new session.
 
-## What you get
+## The band
 
-### A band above the prompt
-
-Three compact rows, always present:
+Above the prompt, one row per kind of fact. A row with nothing to say is omitted,
+so an idle session stays short.
 
 ```
-◈ shannon  claude-sonnet-5  ██████░░░░ 58%  ↓ 12.4k
-first token 840ms  decode 62.4 tok/s  8 req  last turn 4.2s
-↻ Bash  npm test
+ｦ  ⌘ ~/D/project │ ⎇ main* ↑2
+ｧ  λ Opus · claude-opus-4-6 │ ⊡ ██████░░░░ 58% │ ↑36k ↓300 ⊗8.5k
+ｩ  » TTFT 840ms │ 62.4 tok/s │ 8 req
+ｼ  ↻ Bash: npm test
+ｽ  ✔ 12 │ ⚠ 1 │ ⌀ 820ms
+ｻ  ↻ Explore
 ```
 
-Row one is the model and context occupancy. Row two is measured timing. Row three
-lists what is running right now, and turns amber while a tool works.
+The left column is the statusline's matrix rain, driven by a redraw timer.
 
-### `/shannon` — a pane with three tabs
+## `/shannon`
 
-| Tab | Shows |
-| --- | --- |
-| **Now** | Session duration, request count, first-token time and its range, decode rate, context, and the tools running this moment |
-| **Today** | Today's turns, tokens, cache reuse, tool calls, and time spent working; plus a seven-day rollup |
-| **Guard** | Whether the guard is on, and the recent commands it questioned and how they ended |
+The same rows as the band, plus today's rollup:
 
-### A guard for risky commands
+```
+✔ 12 turns │ ↓8.4k │ ↑36k │ ⊗1.2M 62% cache
+▲ guard on
+```
 
-Before a shell command runs, the guard checks it against a narrow, explainable
-list and asks first when it matches:
+## What a statusline cannot do
 
-- recursive deletes, force pushes, hard resets, `git clean -fdx`
-- raw disk writes, world-writable permissions
-- destructive SQL, publishing, `sudo`
-
-It asks through Claude Code's own dialog. **When nobody answers — a `claude -p`
-run, for example — it refuses**, so an unattended command cannot slip through.
-
-`--force-with-lease` and `--force-if-includes` are treated as safe: they refuse to
-overwrite work you have not seen, which is the point of using them.
-
-### A usage ledger
-
-Each turn's tokens, tool calls, and duration go into a per-day bucket in the
-plugin's own store. The Today tab reads it back, and it survives restarts. Only
-the newest 30 days are kept.
+- **Measured timing.** First token is the gap between sending a request and the
+  first streamed chunk. Decode rate uses the streaming time only, so a slow start
+  does not drag the rate down. The statusline reports these as estimates because
+  it cannot see the stream.
+- **Live activity.** The running tool comes from `tool.call`, not from a
+  transcript re-read.
+- **Finished-work counters.** Completed and failed tool calls are counted as they
+  finish, with an average duration, instead of being re-derived from the
+  transcript.
+- **Subagents.** A spawned subagent is listed while it runs, from `agent.spawn`.
+- **The spinner.** Claude Code's own spinner keeps its animation and gains live
+  progress: the tool that is running and how many have finished this turn. A
+  statusline cannot reach that line at all.
+- **A hint, when it matters.** Two failures in a row, a nearly full context, or
+  many tools at once produce one line saying so. Nothing is shown when the
+  session is healthy.
+- **A guard.** Before a shell command runs, risky ones ask first. When nobody
+  answers — a `claude -p` run — the command is refused.
+- **A ledger.** Each turn's tokens and tool calls go into a per-day bucket that
+  survives restarts and feeds the rollup.
 
 ## Commands
 
@@ -66,35 +72,43 @@ the newest 30 days are kept.
 | --- | --- |
 | `/shannon` | Open the pane |
 | `/shannon-guard` | Turn the risky-command guard on or off |
-| `/shannon-reset-ledger` | Clear the recorded usage ledger |
+| `/shannon-rain` | Turn the matrix rain on or off |
 
-## Measured, not estimated
+## Configuration
 
-The statusline package reports transcript-observed estimates because a
-subprocess cannot see the response stream. This plugin can, so:
+`~/.shannon/cc-shannon-mod/config.json`
 
-- **First token** is the time between sending the request and the first streamed
-  chunk.
-- **Decode rate** divides output tokens by the streaming time, excluding the wait
-  for the first token — otherwise a slow start would drag the rate down.
+```json
+{
+  "rain": true
+}
+```
 
-Subagent requests count too; `turn.step` fires for them with `e.agentId` set.
+The file is optional; `/shannon-rain` writes it for you.
+
+## The guard
+
+It matches a narrow, explainable list and says why it matched:
+
+- recursive deletes, force pushes, hard resets, `git clean -fdx`
+- raw disk writes, world-writable permissions
+- destructive SQL, publishing, `sudo`
+
+`--force-with-lease` and `--force-if-includes` are treated as safe: they refuse to
+overwrite work you have not seen.
 
 ## Requirements
 
 - Claude Code 2.1.287 or later, for mods
 - Node.js 22 or later
 
-No network access, no API key, and no configuration file.
+No network access, no API key.
 
 ## Development
 
 ```bash
-# pure helpers
-node --test test/*.test.mjs
-
-# hooks, in an environment like the one they run in
-claude plugin test .
+node --test test/*.test.mjs   # pure helpers
+claude plugin test .          # the hooks, in a host-like environment
 ```
 
 ## License

@@ -13,35 +13,42 @@
  *   - a guard that asks before a risky shell command runs
  */
 
+import { DEFAULT_CONFIG, configPath, parseConfig, serializeConfig } from "./config.js";
+import { averageMs, createCounters, createTracker, recordCompletion, suggestion } from "./activity.js";
 import { bar, contextLevel, fmtDuration, fmtRate, fmtTokens, summarize, tokensPerSecond } from "./format.js";
 import { LEDGER_KEY, cacheHitRatio, dayTotal, emptyLedger, normalizeLedger, recordTurn, recentTotal } from "./ledger.js";
 import { accumulate, createRing, emptyTotals, startRequest } from "./metrics.js";
 import { assessCommand, describeRisks } from "./risk.js";
+import { COLOR, ICON, RAIN_WIDTH, SEPARATOR, rainCell } from "./style.js";
 
 const PANE = "cc-shannon";
-const BAND_ROWS = 3;
 
 /** Session state. A mod's hooks share these module-level values. */
 let totals = emptyTotals();
 let recent = createRing(50);
 let runningTools = [];
 let lastTurn = null;
-let activeRequest = null;
 let guardEnabled = true;
 let guardEvents = [];
 let ledger = emptyLedger();
 let startedAt = null;
 let paneTab = "now";
+let config = { ...DEFAULT_CONFIG };
+let tools = createTracker(20);
+let agents = createTracker(10);
+let counters = createCounters();
 
 function resetSession() {
   totals = emptyTotals();
   recent = createRing(50);
   runningTools = [];
   lastTurn = null;
-  activeRequest = null;
   guardEvents = [];
   startedAt = null;
   paneTab = "now";
+  tools = createTracker(20);
+  agents = createTracker(10);
+  counters = createCounters();
 }
 
 /** Latest TTFT across recorded requests, or null. */
@@ -74,97 +81,289 @@ async function commitTurn($, record, toolCount) {
   await persistLedger($);
 }
 
-/** The band: three compact rows, drawn only when there is something to show. */
 /**
  * The band, composed with whatever other mods draw there.
  *
- * A tree returned for `AbovePrompt` replaces what later mods draw, so ours
- * nests `theirs` instead of dropping it.
+ * Rows follow the statusline's order and language: project, then model and
+ * context, then measured timing, then activity. A row with nothing to say is
+ * omitted rather than padded, so an idle session stays short. A tree returned
+ * for `AbovePrompt` replaces later mods' drawing, so theirs is nested.
  */
 function drawBand($, e, theirs) {
   const { Box, Text } = $.ui.resolve(e);
-  const rows = [];
+  const rows = bandRows(Box, Text);
+  const body = config.rain
+    ? rainWrap(Box, Text, rows)
+    : Box({ key: "cc-shannon-band", flexDirection: "column", children: rows });
 
-  // ── row 1: model, context, and the headline rate ──
-  const contextUsed = contextPercent();
-  const contextBits = [];
-  if (contextUsed !== null) {
-    const level = contextLevel(contextUsed);
-    contextBits.push(
+  return Box({
+    key: "cc-shannon-band-wrap",
+    flexDirection: "column",
+    children: theirs ? [body, theirs] : [body],
+  });
+}
+
+function bandRows(Box, Text) {
+  return [
+    ...projectRow(Box, Text),
+    ...contextRow(Box, Text),
+    ...timingRow(Box, Text),
+    ...activityRow(Box, Text),
+    ...countersRow(Box, Text),
+    ...agentsRow(Box, Text),
+    ...hintRow(Box, Text),
+  ];
+}
+
+/**
+ * A rain strip down the left edge, one cell per row.
+ *
+ * The statusline animates this by repainting a subprocess; here a timer asks
+ * for a redraw, so the strip moves the same way.
+ */
+function rainWrap(Box, Text, rows) {
+  const now = Date.now();
+  return Box({
+    key: "rain",
+    flexDirection: "row",
+    columnGap: 1,
+    children: [
+      Box({
+        key: "rain-strip",
+        flexDirection: "column",
+        width: RAIN_WIDTH,
+        children: rows.map((_, index) => {
+          const cell = rainCell(index, now, rows.length);
+          return Text({ key: `rain-${index}`, color: cell.color, children: [cell.char] });
+        }),
+      }),
+      Box({ key: "cc-shannon-band", flexDirection: "column", children: rows }),
+    ],
+  });
+}
+
+function separator(Text, key) {
+  return Text({ key, color: COLOR.muted, children: [SEPARATOR] });
+}
+
+/** Join parts with the statusline's separator. */
+function row(Box, Text, key, parts) {
+  if (!parts.length) return [];
+  const children = [];
+  parts.forEach((part, index) => {
+    if (index > 0) children.push(separator(Text, `${key}-sep-${index}`));
+    children.push(part);
+  });
+  return [Box({ key: `row-${key}`, flexDirection: "row", columnGap: 1, children })];
+}
+
+/** ⌘ path │ ⎇ branch* │ ✦ 5h */
+function projectRow(Box, Text) {
+  const parts = [];
+  if (lastCwd) {
+    parts.push(Text({ key: "path", color: COLOR.warm, children: [`${ICON.path} ${lastCwd}`] }));
+  }
+  if (lastGit) {
+    const dirty = lastGit.isDirty ? "*" : "";
+    let text = `${ICON.branch} ${lastGit.branch}${dirty}`;
+    if (lastGit.ahead > 0) text += ` ↑${lastGit.ahead}`;
+    if (lastGit.behind > 0) text += ` ↓${lastGit.behind}`;
+    parts.push(Text({ key: "git", color: COLOR.cool, children: [text] }));
+  }
+  if (startedAt) {
+    parts.push(
       Text({
-        key: "ctx",
-        color: level === "critical" ? "red" : level === "warning" ? "yellow" : "default",
-        children: [`${bar(contextUsed, 10)} ${Math.round(contextUsed)}%`],
+        key: "clock",
+        color: COLOR.muted,
+        children: [`${ICON.clock} ${fmtDuration(Date.now() - startedAt)}`],
       }),
     );
   }
+  return row(Box, Text, "project", parts);
+}
 
-  const model = lastModel ?? null;
-  rows.push(
-    Box({
-      key: "band-row-1",
-      flexDirection: "row",
-      columnGap: 2,
-      children: [
-        Text({ key: "brand", color: "magenta", children: ["◈ shannon"] }),
-        model ? Text({ key: "model", dimColor: true, children: [model] }) : null,
-        ...contextBits,
-        totals.outputTokens > 0
-          ? Text({ key: "out", dimColor: true, children: [`↓ ${fmtTokens(totals.outputTokens)}`] })
-          : null,
-      ].filter(Boolean),
-    }),
-  );
+/** λ model │ ⊡ ██████░░░░ 58% │ ↑36k ↓300 ⊗8.5k */
+function contextRow(Box, Text) {
+  const parts = [];
+  if (lastModel) {
+    parts.push(Text({ key: "model", color: COLOR.cool, children: [`${ICON.model} ${lastModel}`] }));
+  }
 
-  // ── row 2: measured metrics, or a hint that they arrive with the first turn ──
+  const used = contextPercent();
+  if (used !== null) {
+    const level = contextLevel(used);
+    const color =
+      level === "critical" ? COLOR.danger : level === "warning" ? COLOR.warm : COLOR.positive;
+    parts.push(
+      Text({ key: "ctx", color: COLOR.cool, children: [ICON.context] }),
+      Text({ key: "ctx-bar", color, children: [`${bar(used, 10)} ${Math.round(used)}%`] }),
+    );
+  }
+
+  const latest = recent.latest();
+  if (latest) {
+    if (latest.inputTokens > 0) {
+      parts.push(Text({ key: "in", color: COLOR.primary, children: [`${ICON.input} ${fmtTokens(latest.inputTokens)}`] }));
+    }
+    if (latest.outputTokens > 0) {
+      parts.push(Text({ key: "out", color: COLOR.accent, children: [`${ICON.output} ${fmtTokens(latest.outputTokens)}`] }));
+    }
+    const cached = latest.cacheReadTokens + latest.cacheCreationTokens;
+    if (cached > 0) {
+      parts.push(Text({ key: "cache", color: COLOR.cool, children: [`${ICON.cache} ${fmtTokens(cached)}`] }));
+    }
+  }
+  return row(Box, Text, "context", parts);
+}
+
+/** » TTFT 840ms │ 62.4 tok/s │ 8 req */
+function timingRow(Box, Text) {
+  const parts = [];
   const ttft = latestTtft();
+  if (ttft !== null) {
+    parts.push(Text({ key: "ttft", color: COLOR.muted, children: [`${ICON.speed} TTFT ${fmtDuration(ttft)}`] }));
+  }
   const decode = sessionDecodeRate();
-  const metricBits = [];
-  if (ttft !== null) metricBits.push(Text({ key: "ttft", children: [`first token ${fmtDuration(ttft)}`] }));
   if (decode !== null) {
-    metricBits.push(Text({ key: "decode", children: [`${fmtRate(decode)} tok/s`] }));
+    parts.push(Text({ key: "decode", color: COLOR.primary, children: [`${fmtRate(decode)} tok/s`] }));
   }
   if (totals.requests > 0) {
-    metricBits.push(Text({ key: "reqs", dimColor: true, children: [`${totals.requests} req`] }));
+    parts.push(Text({ key: "reqs", color: COLOR.muted, children: [`${totals.requests} req`] }));
   }
-  if (lastTurn) {
-    metricBits.push(Text({ key: "last", dimColor: true, children: [`last turn ${fmtDuration(lastTurn)}`] }));
-  }
-  rows.push(
-    Box({
-      key: "band-row-2",
-      flexDirection: "row",
-      columnGap: 2,
-      children: metricBits.length
-        ? metricBits
-        : [Text({ key: "idle", dimColor: true, children: ["measuring — metrics appear after the first turn"] })],
-    }),
-  );
+  return row(Box, Text, "timing", parts);
+}
 
-  // ── row 3: what is running right now ──
-  // Only drawn when there is something to say, so an idle session keeps the
-  // band at two rows instead of spending a line on "idle".
-  const activity = runningTools.map((tool) =>
+/** ↻ Bash: cmd */
+function activityRow(Box, Text) {
+  const parts = runningTools.slice(-3).map((tool, index) =>
     Text({
-      key: `run-${tool.id}`,
-      color: "yellow",
-      children: [`↻ ${tool.name}${tool.target ? ` ${tool.target}` : ""}`],
+      key: `run-${index}`,
+      color: COLOR.warm,
+      children: [`${ICON.running} ${tool.name}${tool.target ? `: ${tool.target}` : ""}`],
     }),
   );
   if (guardEvents.length) {
-    activity.push(
-      Text({ key: "guard-count", color: "red", children: [`⚠ ${guardEvents.length} guarded`] }),
-    );
+    parts.push(Text({ key: "guarded", color: COLOR.danger, children: [`${ICON.warn} ${guardEvents.length}`] }));
   }
-  if (activity.length) {
-    rows.push(Box({ key: "band-row-3", flexDirection: "row", columnGap: 2, children: activity }));
-  }
+  return row(Box, Text, "activity", parts);
+}
 
-  return Box({
-    key: "cc-shannon-band",
-    flexDirection: "column",
-    children: theirs ? [...rows, theirs] : rows,
+/**
+ * Work that already finished: ✔ n │ ✘ n │ ⌀ average.
+ *
+ * A statusline can only see this after re-reading the transcript; the counters
+ * here come from the tool events as they complete.
+ */
+function countersRow(Box, Text) {
+  if (counters.completed === 0) return [];
+  const parts = [
+    Text({ key: "done", color: COLOR.positive, children: [`${ICON.done} ${counters.completed}`] }),
+  ];
+  if (counters.failed > 0) {
+    parts.push(Text({ key: "failed", color: COLOR.danger, children: [`${ICON.warn} ${counters.failed}`] }));
+  }
+  const average = averageMs(counters);
+  if (average !== null) {
+    parts.push(Text({ key: "avg", color: COLOR.muted, children: [`⌀ ${fmtDuration(average)}`] }));
+  }
+  return row(Box, Text, "counters", parts);
+}
+
+/** Running subagents: ↻ Task [model] */
+function agentsRow(Box, Text) {
+  const running = agents.latest(3);
+  if (!running.length) return [];
+  return row(
+    Box,
+    Text,
+    "agents",
+    running.map((agent, index) =>
+      Text({
+        key: `agent-${index}`,
+        color: COLOR.accent,
+        children: [`${ICON.running} ${agent.type}`],
+      }),
+    ),
+  );
+}
+
+/**
+ * One hint, shown only when something needs attention.
+ *
+ * The wording is picked from what actually happened this session, which is the
+ * part a static snapshot cannot produce.
+ */
+function hintRow(Box, Text) {
+  const hint = suggestion({
+    failed: counters.failed,
+    running: runningTools.length,
+    contextPercent: contextPercent(),
+    requests: totals.requests,
   });
+  if (!hint) return [];
+  return row(Box, Text, "hint", [Text({ key: "hint-text", color: COLOR.warm, children: [hint] })]);
+}
+
+let lastCwd = null;
+let lastGit = null;
+let home = "";
+/**
+ * Tokens seen in the current turn, summed from its requests.
+ *
+ * A turn can make several requests, and `turn.complete` may report no usage at
+ * all, so this is what the ledger falls back to. It resets when the next turn
+ * starts, so counts never carry across turns.
+ */
+let turnUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+let turnToolCount = 0;
+
+/**
+ * Read the plugin config.
+ *
+ * `$.fs` and `$.env` stay at the call site; this helper only assembles the
+ * values they return. A missing file is not an error — it means defaults.
+ */
+async function readConfig($) {
+  try {
+    home = (await $.env.get("HOME")) || "";
+  } catch {
+    home = "";
+  }
+  if (!home) return { ...DEFAULT_CONFIG };
+  try {
+    const raw = await $.fs.read(configFile(home));
+    return parseConfig(raw);
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
+}
+
+function configFile(homeDir) {
+  return configPath(homeDir);
+}
+
+/**
+ * Branch and dirty state, read once per session.
+ *
+ * The statusline re-runs `git` on every redraw because it is a fresh process
+ * each time. Here it is read at session start and refreshed after a turn, which
+ * keeps a redraw from spawning a process.
+ */
+async function gitStatus($, cwd) {
+  if (!cwd) return null;
+  try {
+    const branch = await $.process.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+    if (branch.exitCode !== 0) return null;
+    const porcelain = await $.process.run(["git", "status", "--porcelain"], { cwd });
+    return {
+      branch: branch.stdout.trim(),
+      isDirty: porcelain.stdout.trim().length > 0,
+      ahead: 0,
+      behind: 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -192,207 +391,100 @@ function contextPercent() {
 }
 
 /** The `/shannon` pane, with a tab per view. */
+/** The `/shannon` pane: the same rows as the band, plus today's rollup. */
 function drawPane($, e) {
-  const { Box, Text, Button } = $.ui.resolve(e);
-  const redraw = () => $.ui.invalidate("ui.render");
+  const { Box, Text } = $.ui.resolve(e);
+  const rows = [
+    ...projectRow(Box, Text),
+    ...contextRow(Box, Text),
+    ...timingRow(Box, Text),
+    ...activityRow(Box, Text),
+    ...countersRow(Box, Text),
+    ...agentsRow(Box, Text),
+    ...hintRow(Box, Text),
+    ...todayRow(Box, Text),
+    ...guardRow(Box, Text),
+  ];
 
-  const tab = (id, label) =>
-    Button({
-      key: `tab-${id}`,
-      plain: true,
-      dimColor: paneTab !== id,
-      label,
-      onPress: () => {
-        paneTab = id;
-        redraw();
-      },
-    });
-
-  const tabs = Box({
-    key: "tabs",
-    flexDirection: "row",
-    columnGap: 2,
-    children: [tab("now", "Now"), tab("today", "Today"), tab("guard", "Guard")],
-  });
-
-  const el = { Box, Text };
-  const body =
-    paneTab === "today" ? todayRows(el) : paneTab === "guard" ? guardRows(el) : nowRows(el);
-
-  return Box({
-    key: "cc-shannon-pane",
-    flexDirection: "column",
-    gap: 1,
-    children: [tabs, Box({ key: "body", flexDirection: "column", children: body })],
-  });
+  return Box({ key: "cc-shannon-pane", flexDirection: "column", children: rows });
 }
 
-function statRow({ Box, Text }, key, label, value, color) {
-  return Box({
-    key: `stat-${key}`,
-    flexDirection: "row",
-    columnGap: 2,
-    children: [
-      Text({ key: `s-${key}-label`, dimColor: true, children: [label.padEnd(16)] }),
-      Text({ key: `s-${key}-value`, color, children: [value] }),
-    ],
-  });
-}
-
-function nowRows(el) {
-  const { Text } = el;
-  const rows = [];
-  const ttft = latestTtft();
-  const decode = sessionDecodeRate();
-
-  rows.push(statRow(el, "session", "session", startedAt ? fmtDuration(Date.now() - startedAt) : "—", "cyan"));
-  rows.push(statRow(el, "requests", "requests", String(totals.requests), "cyan"));
-  if (ttft !== null) rows.push(statRow(el, "ttft", "time to first token", fmtDuration(ttft), "default"));
-  if (decode !== null) rows.push(statRow(el, "decode", "decode rate", `${fmtRate(decode)} tok/s`, "default"));
-
-  const ttftStats = summarize(totals.ttftMs);
-  if (ttftStats && ttftStats.count > 1) {
-    rows.push(
-      statRow(
-        el,
-        "ttft-range",
-        "first token range",
-        `${fmtDuration(ttftStats.min)} – ${fmtDuration(ttftStats.max)}`,
-        "default",
-      ),
+/** ✔ 12 turns │ ↑40k ↓8k │ 62% cache */
+function todayRow(Box, Text) {
+  const day = dayTotal(ledger, Date.now());
+  if (!day || day.turns === 0) return [];
+  const parts = [
+    Text({ key: "t-turns", children: [`${ICON.done} ${day.turns} turns`] }),
+    Text({ key: "t-out", color: COLOR.accent, children: [`${ICON.output} ${fmtTokens(day.outputTokens)}`] }),
+    Text({ key: "t-in", color: COLOR.primary, children: [`${ICON.input} ${fmtTokens(day.inputTokens)}`] }),
+  ];
+  const ratio = cacheHitRatio(day);
+  if (ratio !== null) {
+    parts.push(
+      Text({ key: "t-cache", color: COLOR.cool, children: [`${ICON.cache} ${Math.round(ratio * 100)}% cache`] }),
     );
   }
-  rows.push(statRow(el, "output", "output tokens", fmtTokens(totals.outputTokens), "default"));
-  const used = contextPercent();
-  if (used !== null) {
-    rows.push(
-      statRow(
-        el,
-        "context",
-        "context used",
-        `${bar(used, 16)} ${Math.round(used)}%`,
-        contextLevel(used) === "ok" ? "default" : "yellow",
-      ),
-    );
-  }
-
-  rows.push(Text({ key: "now-runs", dimColor: true, children: [""] }));
-  rows.push(Text({ key: "now-runs-title", dimColor: true, children: ["Running"] }));
-  if (runningTools.length) {
-    for (const tool of runningTools) {
-      rows.push(
-        Text({
-          key: `now-run-${tool.id}`,
-          children: [`  ↻ ${tool.name}${tool.target ? ` ${tool.target}` : ""}`],
-        }),
-      );
-    }
-  } else {
-    rows.push(Text({ key: "now-run-none", dimColor: true, children: ["  nothing"] }));
-  }
-  return rows;
+  return row(Box, Text, "today", parts);
 }
 
-function todayRows(el) {
-  const { Text } = el;
-  const today = dayTotal(ledger, Date.now());
-  const week = recentTotal(ledger, Date.now(), 7);
-  const rows = [];
-
-  rows.push(Text({ key: "today-title", dimColor: true, children: ["Today"] }));
-  if (!today) {
-    rows.push(Text({ key: "today-none", dimColor: true, children: ["  no turns recorded yet"] }));
-  } else {
-    rows.push(statRow(el, "t-turns", "turns", String(today.turns), "cyan"));
-    rows.push(statRow(el, "t-out", "output tokens", fmtTokens(today.outputTokens), "default"));
-    rows.push(statRow(el, "t-in", "input tokens", fmtTokens(today.inputTokens), "default"));
-    const ratio = cacheHitRatio(today);
-    if (ratio !== null) {
-      rows.push(statRow(el, "t-cache", "cache reuse", `${Math.round(ratio * 100)}%`, "cyan"));
-    }
-    rows.push(statRow(el, "t-tools", "tool calls", String(today.tools), "default"));
-    rows.push(statRow(el, "t-time", "time working", fmtDuration(today.durationMs), "default"));
-  }
-
-  rows.push(Text({ key: "week-title", dimColor: true, children: [""] }));
-  rows.push(Text({ key: "week-label", dimColor: true, children: ["Last 7 days"] }));
-  if (week.turns === 0) {
-    rows.push(Text({ key: "week-none", dimColor: true, children: ["  nothing recorded"] }));
-  } else {
-    rows.push(statRow(el, "w-turns", "turns", String(week.turns), "cyan"));
-    rows.push(statRow(el, "w-out", "output tokens", fmtTokens(week.outputTokens), "default"));
-    rows.push(statRow(el, "w-days", "active days", String(week.days), "default"));
-    const ratio = cacheHitRatio(week);
-    if (ratio !== null) {
-      rows.push(statRow(el, "w-cache", "cache reuse", `${Math.round(ratio * 100)}%`, "cyan"));
-    }
-  }
-  return rows;
-}
-
-function guardRows(el) {
-  const { Box, Text } = el;
-  const rows = [];
-  rows.push(
-    Box({
-      key: "guard-toggle",
-      flexDirection: "row",
-      columnGap: 2,
-      children: [
-        Text({
-          key: "guard-state",
-          color: guardEnabled ? "green" : "yellow",
-          children: [guardEnabled ? "guard is on" : "guard is off"],
-        }),
-        Text({ key: "guard-hint", dimColor: true, children: ["/shannon-guard toggles it"] }),
-      ],
+/** ⚠ guard on │ then the commands it questioned */
+function guardRow(Box, Text) {
+  const parts = [
+    Text({
+      key: "guard-state",
+      color: guardEnabled ? COLOR.positive : COLOR.warm,
+      children: [`${ICON.warn} guard ${guardEnabled ? "on" : "off"}`],
     }),
-  );
-  rows.push(Text({ key: "guard-log-title", dimColor: true, children: [""] }));
-  rows.push(Text({ key: "guard-log-label", dimColor: true, children: ["Recent prompts"] }));
-  if (!guardEvents.length) {
-    rows.push(Text({ key: "guard-none", dimColor: true, children: ["  no risky commands seen"] }));
-  } else {
-    for (const [index, event] of guardEvents.slice(-8).entries()) {
-      rows.push(
-        Text({
-          key: `guard-${index}`,
-          color: event.allowed ? "yellow" : "red",
-          children: [`  ${event.allowed ? "ran" : "blocked"}: ${event.reason}`],
-        }),
-      );
-    }
+  ];
+  for (const [index, event] of guardEvents.slice(-3).entries()) {
+    parts.push(
+      Text({
+        key: `guard-${index}`,
+        color: event.allowed ? COLOR.warm : COLOR.danger,
+        children: [`${event.allowed ? "ran" : "blocked"} ${event.because}`],
+      }),
+    );
   }
-  return rows;
+  return row(Box, Text, "guard", parts);
 }
+
 
 export function register(on) {
   on("session.start", async ($, e, next) => {
     resetSession();
     startedAt = Date.now();
+    config = await readConfig($);
+    lastCwd = await $.session.cwd();
+    lastGit = await gitStatus($, lastCwd);
 
     const saved = await $.store.get(LEDGER_KEY);
     ledger = normalizeLedger(saved);
 
     await $.command.register({
       name: "shannon",
-      description: "Open the cc-shannon mission control pane",
+      description: "Open the cc-shannon pane",
     });
     await $.command.register({
       name: "shannon-guard",
       description: "Turn the risky-command guard on or off",
     });
     await $.command.register({
-      name: "shannon-reset-ledger",
-      description: "Clear the recorded usage ledger",
+      name: "shannon-rain",
+      description: "Turn the matrix rain on or off",
     });
+
+    // The rain moves, so the band needs a redraw on a timer.
+    if (config.rain) {
+      $.clock.every(320, () => $.ui.invalidate("ui.render"));
+    }
 
     return next(e);
   });
 
   // ── turn metrics ──
   on("turn.start", async ($, e, next) => {
-    activeRequest = null;
+    turnUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    turnToolCount = 0;
     return next(e);
   });
 
@@ -421,6 +513,12 @@ export function register(on) {
     totals = accumulate(totals, record);
     recent.push(record);
     lastTurn = record.totalMs;
+    turnUsage = {
+      inputTokens: turnUsage.inputTokens + record.inputTokens,
+      outputTokens: turnUsage.outputTokens + record.outputTokens,
+      cacheReadTokens: turnUsage.cacheReadTokens + record.cacheReadTokens,
+      cacheCreationTokens: turnUsage.cacheCreationTokens + record.cacheCreationTokens,
+    };
 
     if (result?.usage) {
       lastModel = result.usage.model ?? lastModel;
@@ -429,13 +527,16 @@ export function register(on) {
   });
 
   on("turn.complete", async ($, e, next) => {
+    // A completed turn may carry its own totals. When it does not, the sum of
+    // this turn's requests is the source, so the ledger gets real counts
+    // instead of zeros.
     await commitTurn($, {
-      inputTokens: e.usage?.input_tokens ?? 0,
-      outputTokens: e.usage?.output_tokens ?? 0,
-      cacheReadTokens: e.usage?.cache_read_input_tokens ?? 0,
-      cacheCreationTokens: e.usage?.cache_creation_input_tokens ?? 0,
+      inputTokens: e.usage?.input_tokens ?? turnUsage.inputTokens,
+      outputTokens: e.usage?.output_tokens ?? turnUsage.outputTokens,
+      cacheReadTokens: e.usage?.cache_read_input_tokens ?? turnUsage.cacheReadTokens,
+      cacheCreationTokens: e.usage?.cache_creation_input_tokens ?? turnUsage.cacheCreationTokens,
       totalMs: e.durationMs ?? null,
-    }, runningTools.length);
+    }, turnToolCount);
     $.ui.invalidate("ui.render");
     return next(e);
   });
@@ -461,11 +562,13 @@ export function register(on) {
     if (e.tool === "AskUserQuestion") return next(e);
 
     const entry = {
-      id: `${e.tool}-${runningTools.length}-${Date.now()}`,
+      id: `${e.tool}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: e.tool,
       target: summarizeTarget(e),
     };
     runningTools = [...runningTools, entry];
+    tools.add(entry.id, { name: entry.name, target: entry.target });
+    turnToolCount += 1;
     $.ui.invalidate("ui.render");
 
     let result;
@@ -483,8 +586,25 @@ export function register(on) {
       return result;
     } finally {
       runningTools = runningTools.filter((item) => item.id !== entry.id);
+      const finished = tools.remove(entry.id);
+      if (finished) {
+        counters = recordCompletion(counters, {
+          durationMs: Date.now() - finished.at,
+          failed: Boolean(result?.isError || result?.deny),
+          label: finished.target ? `${finished.name}: ${finished.target}` : finished.name,
+        });
+      }
       $.ui.invalidate("ui.render");
     }
+  });
+
+  // ── subagents, which the statusline can only infer from the transcript ──
+  on("agent.spawn", async ($, e, next) => {
+    agents.add(`${e.agentId ?? e.type ?? "agent"}-${Date.now()}`, {
+      type: e.type ?? "agent",
+    });
+    $.ui.invalidate("ui.render");
+    return next(e);
   });
 
   on("session.end", async ($, e, next) => {
@@ -511,10 +631,15 @@ export function register(on) {
     };
   });
 
-  on("command.run", { command: "shannon-reset-ledger" }, async ($) => {
-    ledger = emptyLedger();
-    await persistLedger($);
-    return { text: "cc-shannon usage ledger cleared." };
+  on("command.run", { command: "shannon-rain" }, async ($) => {
+    config = { ...config, rain: !config.rain };
+    try {
+      await $.fs.write(configFile(home), serializeConfig(config));
+    } catch {
+      // A config that cannot be written still applies for this session.
+    }
+    $.ui.invalidate("ui.render");
+    return { text: `cc-shannon rain is now ${config.rain ? "on" : "off"}.` };
   });
 
   // ── drawing ──
@@ -527,6 +652,22 @@ export function register(on) {
   on("ui.render", { component: "Pane" }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e);
     return drawPane($, e);
+  });
+
+  // ── the spinner, which a statusline cannot reach at all ──
+  // Keeps Claude Code's own spinner and appends live progress to it: the tool
+  // that is running, and how many it has finished this turn.
+  on("ui.render", { component: "Spinner" }, async ($, e, next) => {
+    const parts = [];
+    const current = runningTools[runningTools.length - 1];
+    if (current) {
+      parts.push(`${current.name}${current.target ? `: ${current.target}` : ""}`);
+    }
+    if (turnToolCount > 0) parts.push(`${turnToolCount} tool${turnToolCount === 1 ? "" : "s"}`);
+    if (!parts.length) return next(e);
+
+    const suffix = `${e.props?.suffix ?? ""} · ${parts.join(" · ")}`;
+    return next({ ...e, props: { ...e.props, suffix } });
   });
 }
 
