@@ -15,6 +15,8 @@ export const DEFAULT_CONFIG = {
   lens: true,
   /** Queue prompts to send when the current turn ends. */
   queue: true,
+  /** Slowest measured tools. */
+  latency: true,
 };
 
 /** Where the config lives, alongside the statusline's own toggles under ~/.shannon. */

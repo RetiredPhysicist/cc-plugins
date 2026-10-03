@@ -6,7 +6,7 @@ a plugin marketplace.
 | plugin | what it does |
 | --- | --- |
 | [`cc-shannon-statusline`](./plugins/cc-shannon-statusline) | A live HUD under the prompt: project, model, context, throughput, tools, agents, and config counts |
-| [`cc-shannon-mod`](./plugins/cc-shannon-mod) | Mission control: measured turn timing, live activity, a risky-command guard, and a usage ledger |
+| [`cc-shannon-mod`](./plugins/cc-shannon-mod) | Mission control: measured turn timing, live activity, slowest-tool latency, a context runway, a prompt queue, a risky-command guard, a usage ledger, and a companion fed by green builds |
 
 Related: [`cc-atuin`](https://github.com/RetiredPhysicist/cc-atuin), kept in its own
 repository.

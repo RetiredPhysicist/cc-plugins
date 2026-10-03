@@ -30,15 +30,22 @@ so an idle session stays short.
 ｼ  ↻ Bash: npm test
 ｽ  ✔ 12 │ ⚠ 1 │ ⌀ 820ms
 ｻ  ↻ Explore
+▸  say the queued thing (+1)
+(•‿•) Lv3 ✔4 ⎇2
+⊡ +2.4%/turn · ~7 turns left
+⌀ Bash 3s · Read 1.2s
 ```
 
 The left column is the statusline's matrix rain, driven by a redraw timer.
 
 ## `/shannon`
 
-The same rows as the band, plus today's rollup:
+The same rows as the band, plus a slowest-tool ranking, today's rollup, and
+guard state:
 
 ```
+1. Bash 18s
+2. Read 1.2s
 ✔ 12 turns │ ↓8.4k │ ↑36k │ ⊗1.2M 62% cache
 ▲ guard on
 ```
@@ -65,6 +72,15 @@ The same rows as the band, plus today's rollup:
   answers — a `claude -p` run — the command is refused.
 - **A ledger.** Each turn's tokens and tool calls go into a per-day bucket that
   survives restarts and feeds the rollup.
+- **A companion.** A passing test run or a commit feeds a small pet; red builds
+  do not. It lives in the same `$.store` as the ledger, so it survives restarts.
+- **A prompt queue.** `/q <text>` holds prompts while a turn is running and sends
+  the next one when the turn ends. `/shannon-queue` lists, reorders, and drops
+  them.
+- **A context runway.** The lens samples context growth per turn and estimates
+  how many turns remain before compaction.
+- **Slowest-tool latency.** Every finished tool is timed directly from its call
+  events; the row shows the slowest measured tool per name.
 
 ## Commands
 
@@ -73,6 +89,9 @@ The same rows as the band, plus today's rollup:
 | `/shannon` | Open the pane |
 | `/shannon-guard` | Turn the risky-command guard on or off |
 | `/shannon-rain` | Turn the matrix rain on or off |
+| `/shannon-toggle <name>` | Turn `companion`, `lens`, `queue`, or `latency` on or off |
+| `/q <text>` | Queue a prompt for the end of the current turn |
+| `/shannon-queue [list\|drop n\|up n\|down n]` | Manage queued prompts |
 
 ## Configuration
 
@@ -80,11 +99,23 @@ The same rows as the band, plus today's rollup:
 
 ```json
 {
-  "rain": true
+  "rain": true,
+  "companion": true,
+  "lens": true,
+  "queue": true,
+  "latency": true
 }
 ```
 
-The file is optional; `/shannon-rain` writes it for you.
+The file is optional; `/shannon-rain` and `/shannon-toggle` write it for you.
+
+| Option | Default | Effect |
+| --- | ---: | --- |
+| `rain` | `true` | Matrix column down the left edge of the band. |
+| `companion` | `true` | Show the test-and-commit pet. |
+| `lens` | `true` | Show context growth and remaining turns. |
+| `queue` | `true` | Enable `/q` and the queue row. |
+| `latency` | `true` | Show the slowest measured tools. |
 
 ## The guard
 
