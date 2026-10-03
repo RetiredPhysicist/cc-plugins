@@ -9,30 +9,54 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/cc-shannon-statusline"><img src="https://img.shields.io/npm/v/cc-shannon-statusline" alt="npm version" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/cc-shannon-statusline" alt="MIT license" /></a>
-  <a href="./package.json"><img src="https://img.shields.io/node/v/cc-shannon-statusline" alt="Node.js version" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+  <a href="https://code.claude.com/docs/en/plugins"><img src="https://img.shields.io/badge/Claude%20Code-plugin-6b4fbb" alt="Claude Code plugin" /></a>
 </p>
 
 ## Install
 
 ```bash
-npm install -g cc-shannon-statusline
+claude plugin marketplace add RetiredPhysicist/cc-plugins
+claude plugin install cc-shannon-statusline@cc-plugins
 ```
 
-Add to `~/.claude/settings.json`:
+Restart Claude Code, or run `/reload-plugins` in an open session. The status line
+appears on the next session start.
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "cc-shannon-statusline",
-    "refreshInterval": 1
-  }
-}
+### What the install does
+
+A Claude Code plugin cannot set the main `statusLine` itself, and a plugin's own
+directory changes on every update. So the plugin ships a `SessionStart` hook that:
+
+1. Copies the bundled build to `~/.shannon/cc-shannon-statusline/`
+2. Writes a fixed entry point at `~/.shannon/cc-shannon-statusline/run.sh`
+3. Points `statusLine` in `~/.claude/settings.json` at that runner
+
+Because the path is stable, `claude plugin update` alone refreshes the HUD.
+
+The hook is conservative with your settings: it writes the `statusLine` field
+only when that field is absent or already points at this plugin. A status line
+you configured yourself is never overwritten. The logic is in
+[`scripts/install.sh`](./scripts/install.sh).
+
+`refreshInterval` is set to `1` (seconds), so the HUD also redraws between Claude
+Code events.
+
+### Requirements
+
+- Node.js 22 or later, available as `node` on your `PATH`
+
+### Uninstall
+
+```bash
+claude plugin uninstall cc-shannon-statusline@cc-plugins
 ```
 
-`refreshInterval` is measured in seconds. `1` refreshes the statusline at least once per second in addition to Claude Code events.
+That removes the plugin. The copied build and the `statusLine` entry stay behind,
+because a plugin cannot run code on uninstall. Clear them with `/statusline
+delete`, or remove the `statusLine` field from `~/.claude/settings.json` and
+delete `~/.shannon/cc-shannon-statusline/`.
+
 
 ## HUD
 

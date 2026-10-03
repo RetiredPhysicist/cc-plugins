@@ -10,50 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  changed:
-    runs-on: ubuntu-latest
-    outputs:
-      packages: ${{ steps.pick.outputs.packages }}
-      matrix: ${{ steps.pick.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Pick changed packages
-        id: pick
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            packages=$(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-            packages=$(git diff --name-only "$base" HEAD -- packages | cut -d/ -f2 | sort -u | paste -sd, -)
-          else
-            before="${{ github.event.before }}"
-            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
-              packages=$(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)
-            else
-              packages=$(git diff --name-only "$before" HEAD -- packages | cut -d/ -f2 | sort -u | paste -sd, -)
-            fi
-          fi
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
-          if [ -n "$packages" ]; then
-            json=$(printf '%s' "$packages" | jq -R -c 'split(",")')
-          else
-            json='[]'
-          fi
-          echo "matrix=$json" >> "$GITHUB_OUTPUT"
-          echo "Packages: ${packages:-none}"
-
   test:
-    needs: changed
-    if: needs.changed.outputs.packages != ''
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.changed.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -61,33 +19,29 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Prepare test home
-        run: mkdir -p "$HOME/.shannon" "$HOME/.claude"
-
       - name: Install
-        working-directory: packages/${{ matrix.package }}
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else bun install --frozen-lockfile || bun install; fi
+        working-directory: plugins/cc-shannon-statusline
+        run: bun install --frozen-lockfile || bun install
 
-      - name: Build
-        working-directory: packages/${{ matrix.package }}
+      - name: Tests
+        working-directory: plugins/cc-shannon-statusline
+        run: bun test
+
+      # The plugin installs a prebuilt dist, so a stale dist would ship stale
+      # code. Rebuild and fail when the committed output differs.
+      - name: Verify the committed dist matches the source
+        working-directory: plugins/cc-shannon-statusline
         run: |
-          if [ -f package.json ] && node -e 'const p=require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
-            bun run build
+          bun run build
+          if ! git diff --quiet -- dist; then
+            echo "dist/ is out of date; run 'bun run build' and commit the result" >&2
+            git --no-pager diff --stat -- dist
+            exit 1
           fi
 
-      - name: Typecheck
-        working-directory: packages/${{ matrix.package }}
+      - name: Validate the marketplace and the plugin
         run: |
-          if [ -f tsconfig.json ]; then bunx tsc --noEmit; fi
-
-      - name: Test
-        working-directory: packages/${{ matrix.package }}
-        run: |
-          if [ -f package.json ] && node -e 'const p=require("./package.json"); process.exit(p.scripts && p.scripts["test:ci"] ? 0 : 1)'; then
-            npm run test:ci
-          elif [ -f package.json ] && node -e 'const p=require("./package.json"); process.exit(p.scripts && p.scripts.test ? 0 : 1)'; then
-            bun test
-          else
-            echo "no test script"
-          fi
+          # Not --strict: the plugin deliberately omits `version` so its version
+          # is the source commit SHA, which the strict check warns about.
+          npx --yes @anthropic-ai/claude-code@latest plugin validate .
+          npx --yes @anthropic-ai/claude-code@latest plugin validate plugins/cc-shannon-statusline

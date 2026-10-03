@@ -1,35 +1,47 @@
 # cc-plugins
 
-RetiredPhysicist monorepo for Claude Code plugins.
+RetiredPhysicist plugins for [Claude Code](https://claude.ai/code), distributed as
+a plugin marketplace.
 
-Each package keeps its own npm name, version, and release cadence:
-
-| package | npm |
+| plugin | what it does |
 | --- | --- |
-| `cc-shannon-statusline` | `npm:cc-shannon-statusline` |
+| [`cc-shannon-statusline`](./plugins/cc-shannon-statusline) | A live HUD under the prompt: project, model, context, throughput, tools, agents, and config counts |
 
-Release a package by pushing a tag named `<package>-v<version>`, for example
-`cc-shannon-statusline-v0.5.2`. The publish workflow builds and publishes only that
-package.
+Related: [`cc-atuin`](https://github.com/RetiredPhysicist/cc-atuin), kept in its own
+repository.
 
-Claude Code plugins that ship a mod live in their own repositories, because a
-plugin is installed from a marketplace rather than from npm. See
-[`cc-atuin`](https://github.com/RetiredPhysicist/cc-atuin).
-
-## Development
+## Install
 
 ```bash
-cd packages/<package>
-bun install   # or npm ci when a package-lock.json exists
-bun run build
-bun test
+claude plugin marketplace add RetiredPhysicist/cc-plugins
+claude plugin install cc-shannon-statusline@cc-plugins
 ```
 
-## Adding a package
+Or add the marketplace once and install from `/plugin` in a session.
 
-1. Put it under `packages/<name>` with its own `package.json`, version, and npm name.
-2. Keep the package self-contained; the monorepo root has no shared runtime code.
-3. Add it to the table above.
+## Update
 
-The tag prefix must match the directory name, because `publish.yml` resolves the
-package from the tag.
+```bash
+claude plugin update cc-shannon-statusline@cc-plugins
+```
+
+Then restart Claude Code, or run `/reload-plugins`. Plugins here carry no
+`version` field on purpose: the version is the source commit SHA, so a push to
+`main` is the release.
+
+## How plugins are laid out
+
+Each plugin lives in `plugins/<name>/` with a `.claude-plugin/plugin.json`. Claude
+Code reads the repository as-is and runs no install script, so a plugin that ships
+built code commits that build and CI fails when the build is stale.
+
+## Adding a plugin
+
+1. Create `plugins/<name>/` with `.claude-plugin/plugin.json`.
+2. Add it to `plugins` in [`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json).
+3. Keep it self-contained. The repository root has no shared runtime code.
+4. Commit any built output the plugin needs at install time.
+
+## License
+
+MIT

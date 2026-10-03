@@ -1,0 +1,8 @@
+{
+  "name": "cc-shannon-statusline",
+  "description": "A live HUD for Claude Code: project, model, context, throughput, tools, agents, and config counts.",
+  "author": {
+    "name": "RetiredPhysicist",
+    "url": "https://github.com/RetiredPhysicist"
+  }
+}

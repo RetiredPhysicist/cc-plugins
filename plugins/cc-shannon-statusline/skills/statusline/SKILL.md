@@ -1,8 +1,15 @@
+---
+name: statusline
+description: Orientation for the cc-shannon-statusline Claude Code plugin. Use when working on this plugin's build, install hook, rendering, or distribution.
+---
+
 # cc-shannon-statusline — AI Agent Orientation
 
 ## What is this
 
-A standalone npm package: a Claude Code statusline hook script. Reads JSON from stdin, prints a multi-line ANSI HUD to stdout, and writes a Bridge JSON file (default `~/Library/Caches/shannon/status.json`) for downstream consumers (Shannon GUI being one).
+A Claude Code plugin: a statusline hook script. Reads JSON from stdin, prints a multi-line ANSI HUD to stdout, and writes a Bridge JSON file (default `~/Library/Caches/shannon/status.json`) for downstream consumers.
+
+Distribution is the plugin marketplace, not npm. `scripts/install.sh` runs on `SessionStart`, copies the bundled `dist/` to `~/.shannon/cc-shannon-statusline/`, and points the user's `statusLine` at that stable path.
 
 Public repo: [`RetiredPhysicist/cc-plugins`](https://github.com/RetiredPhysicist/cc-plugins). MIT licensed. Zero runtime dependencies.
 
@@ -52,12 +59,11 @@ src/
 ## Where things live
 
 - Dev workflow: `CONTRIBUTING.md`
-- Release SOP (semver, tag, manual `npm publish`): `RELEASING.md`
+- Release: push to `main`; the plugin version is the commit SHA
 - User-facing docs (install, hook config, HUD format, bridge schema): `README.md`
 
 ## Don't
 
-- Do not run `npm publish` automatically. Publish is human-gated; tell the user when a release is ready.
 - Do not introduce runtime dependencies.
-- Do not commit `dist/` (gitignored; built fresh by `prepublishOnly`).
+- **Do commit `dist/`.** The marketplace serves the repository as-is and does not build on install, so a stale `dist/` ships stale code. Run `bun run build` before committing source changes; CI fails when the two disagree.
 - Do not add references to Shannon-internal modules, file paths, or any private repo content.
