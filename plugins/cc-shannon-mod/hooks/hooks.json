@@ -1,0 +1,6 @@
+{
+  "description": "cc-shannon-mod hooks module",
+  "modules": [
+    "./register.js"
+  ]
+}

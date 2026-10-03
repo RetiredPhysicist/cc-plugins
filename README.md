@@ -6,6 +6,7 @@ a plugin marketplace.
 | plugin | what it does |
 | --- | --- |
 | [`cc-shannon-statusline`](./plugins/cc-shannon-statusline) | A live HUD under the prompt: project, model, context, throughput, tools, agents, and config counts |
+| [`cc-shannon-mod`](./plugins/cc-shannon-mod) | Mission control: measured turn timing, live activity, a risky-command guard, and a usage ledger |
 
 Related: [`cc-atuin`](https://github.com/RetiredPhysicist/cc-atuin), kept in its own
 repository.
@@ -15,7 +16,15 @@ repository.
 ```bash
 claude plugin marketplace add RetiredPhysicist/cc-plugins
 claude plugin install cc-shannon-statusline@cc-plugins
+claude plugin install cc-shannon-mod@cc-plugins
 ```
+
+`cc-shannon-statusline` and `cc-shannon-mod` overlap on purpose but see different
+things. The statusline is an external command that receives a JSON snapshot and
+reconstructs activity from the transcript, so its speed numbers are labelled
+estimates. The mod runs inside Claude Code, so its timing is measured from the
+response stream, and it can draw interactive UI and act on what it sees. Install
+either or both; they do not conflict.
 
 Or add the marketplace once and install from `/plugin` in a session.
 

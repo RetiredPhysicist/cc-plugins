@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  statusline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -39,9 +39,37 @@ jobs:
             exit 1
           fi
 
-      - name: Validate the marketplace and the plugin
+  mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Unit tests
+        working-directory: plugins/cc-shannon-mod
+        run: node --test test/*.test.mjs
+
+      - name: Mod tests
+        working-directory: plugins/cc-shannon-mod
+        run: npx --yes @anthropic-ai/claude-code@latest plugin test .
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Not --strict: plugins here deliberately omit `version` so it tracks the
+      # source commit SHA, which the strict check warns about.
+      - name: Validate the marketplace and every plugin
         run: |
-          # Not --strict: the plugin deliberately omits `version` so its version
-          # is the source commit SHA, which the strict check warns about.
           npx --yes @anthropic-ai/claude-code@latest plugin validate .
-          npx --yes @anthropic-ai/claude-code@latest plugin validate plugins/cc-shannon-statusline
+          for dir in plugins/*/; do
+            npx --yes @anthropic-ai/claude-code@latest plugin validate "$dir"
+          done

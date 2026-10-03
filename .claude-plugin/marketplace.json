@@ -11,6 +11,12 @@
       "source": "./plugins/cc-shannon-statusline",
       "description": "A live HUD for Claude Code: project, model, context, throughput, tools, agents, and config counts.",
       "category": "interface"
+    },
+    {
+      "name": "cc-shannon-mod",
+      "source": "./plugins/cc-shannon-mod",
+      "description": "Mission control for Claude Code: measured turn metrics, live activity, a risky-command guard, and a usage ledger.",
+      "category": "interface"
     }
   ]
 }

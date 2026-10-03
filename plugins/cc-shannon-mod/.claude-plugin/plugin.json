@@ -1,0 +1,8 @@
+{
+  "name": "cc-shannon-mod",
+  "description": "Mission control for Claude Code: measured turn metrics, live activity, a risky-command guard, and a usage ledger.",
+  "author": {
+    "name": "RetiredPhysicist",
+    "url": "https://github.com/RetiredPhysicist"
+  }
+}
