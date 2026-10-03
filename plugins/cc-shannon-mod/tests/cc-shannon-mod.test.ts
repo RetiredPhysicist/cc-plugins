@@ -9,6 +9,7 @@ import { expect, mock, test } from "claude-code/testing";
 function stubBase(
   on: (name: string, handler: unknown) => void,
   saved: Map<string, unknown>,
+  overrides: { status?: () => string; contextPercent?: () => number } = {},
 ) {
   on("session.start", () => ({ cwd: "/work" }));
   on("session.cwd", () => ({ value: "/work" }));
@@ -28,7 +29,7 @@ function stubBase(
     value:
       e.argv.includes("--abbrev-ref")
         ? { exitCode: 0, stdout: "main\n", stderr: "" }
-        : { exitCode: 0, stdout: "", stderr: "" },
+        : { exitCode: 0, stdout: overrides.status?.() ?? "", stderr: "" },
   }));
   on("session.end", () => ({}));
   // `session.measure` cannot be fired from the test kit; the context row is
@@ -41,7 +42,12 @@ function stubBase(
     props: {},
     children: [e.props?.suffix || "other-mod"],
   }));
-  on("session.usage", () => ({ value: { context: { percent: 42, tokens: 8400, window: 20000 }, rateLimits: [], cost: null, startedAt: 0 } }));
+  on("session.usage", () => {
+    const percent = overrides.contextPercent?.() ?? 42;
+    return {
+      value: { context: { percent, tokens: percent * 200, window: 20000 }, rateLimits: [], cost: null, startedAt: 0 },
+    };
+  });
   // `$.ui.invalidate` is answered by the test kit itself; stubbing it would
   // swallow the redraw and the pane would never re-render.
   on("ui.open", () => ({ value: { isPlaced: true } }));
@@ -171,6 +177,24 @@ test("the pane shows measured metrics after a turn", async ($, on) => {
   // Output tokens appear on the context row.
   const context = JSON.stringify(await ui.find({ key: "row-context" }));
   expect(context).toContain("40");
+  await ui.unmount();
+});
+
+test("the pane includes the extended rows", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "npm test" });
+  await $.command.run({ command: "q", args: "next prompt" });
+
+  const ui = await mountPane($);
+  expect(await ui.find({ key: "row-queue" })).toBeDefined();
+  expect(await ui.find({ key: "row-companion" })).toBeDefined();
+  expect(await ui.find({ key: "row-latency" })).toBeDefined();
+  expect(await ui.find({ key: "tool-0" })).toBeDefined();
   await ui.unmount();
 });
 
@@ -374,6 +398,40 @@ test("finished tools are counted, with failures separated", async ($, on) => {
   await ui.unmount();
 });
 
+test("finished tools contribute a latency row", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  const clock = mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  // `$.clock.now()` is not driven by `mock.clock` here, so assert the row is
+  // populated rather than pinning an exact duration.
+  await $.tool.call({ tool: "Bash", command: "sleep 5" });
+
+  const band = await mountBand($);
+  const latency = JSON.stringify(await band.find({ key: "row-latency" }));
+  expect(latency).toContain("Bash");
+  expect(latency).toContain("0ms");
+  await band.unmount();
+});
+
+test("the latency row can be turned off", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "true" });
+  const answer = await $.command.run({ command: "shannon-toggle", args: "latency" });
+  expect(answer.text).toContain("off");
+
+  const band = await mountBand($);
+  expect(await band.find({ key: "row-latency" })).toBeUndefined();
+  await band.unmount();
+});
+
 test("a running tool is reported while it runs", async ($, on) => {
   const saved = new Map<string, unknown>();
   stubBase(on, saved);
@@ -550,6 +608,25 @@ test("the ledger survives a new session", async ($, on) => {
   await ui.unmount();
 });
 
+test("a turn refreshes the git row", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  let status = "";
+  stubBase(on, saved, { status: () => status });
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const before = await mountBand($);
+  expect(JSON.stringify(await before.find({ key: "row-project" }))).not.toContain("*");
+  await before.unmount();
+
+  status = "?? new-file\n";
+  await $.turn.complete({ turnId: "t1", answer: "", durationMs: 100, isAborted: false, usage: null });
+
+  const after = await mountBand($);
+  expect(JSON.stringify(await after.find({ key: "row-project" }))).toContain("*");
+  await after.unmount();
+});
+
 /** Mount the band, which is where the compact rows live. */
 async function mountBand($: any, rows = 8) {
   return $.ui.mount({
@@ -563,6 +640,25 @@ async function mountBand($: any, rows = 8) {
       isWorking: false,
       maxRows: rows,
       bodyColumns: 100,
+      scroll: { offset: 0, bodyRows: rows },
+      view: {},
+    },
+  });
+}
+
+/** Mount the `/shannon` pane. */
+async function mountPane($: any, rows = 24) {
+  return $.ui.mount({
+    plugin: "cc-shannon-mod",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "cc-shannon",
+    viewport: { columns: 120, rows: 40 },
+    props: {
+      title: "Shannon",
+      isFocused: true,
+      bodyColumns: 100,
+      placement: "inline",
       scroll: { offset: 0, bodyRows: rows },
       view: {},
     },
@@ -715,5 +811,23 @@ test("the lens row stays hidden until growth is known", async ($, on) => {
   // measured — the growth math itself is covered by the unit tests.
   const band = await mountBand($);
   expect(await band.find({ key: "row-lens" })).toBeUndefined();
+  await band.unmount();
+});
+
+test("a turn samples context so the lens can show growth", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  let percent = 20;
+  stubBase(on, saved, { contextPercent: () => percent });
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.turn.complete({ turnId: "t1", answer: "", durationMs: 100, isAborted: false, usage: null });
+
+  percent = 30;
+  await $.turn.complete({ turnId: "t2", answer: "", durationMs: 100, isAborted: false, usage: null });
+
+  const band = await mountBand($);
+  const lens = JSON.stringify(await band.find({ key: "row-lens" }));
+  expect(lens).toContain("%/turn");
   await band.unmount();
 });

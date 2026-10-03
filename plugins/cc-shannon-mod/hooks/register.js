@@ -17,6 +17,7 @@ import { DEFAULT_CONFIG, configPath, parseConfig, serializeConfig } from "./conf
 import { averageMs, createCounters, createTracker, recordCompletion, suggestion } from "./activity.js";
 import { COMPANION_KEY, classify, describe as describeCompanion, emptyCompanion, feed, normalizeCompanion } from "./companion.js";
 import { createLens, describe as describeLens, sample } from "./lens.js";
+import { createLatency, describe as describeLatency, formatMs as formatLatencyMs, record as recordLatency, slowest as slowestLatency } from "./latency.js";
 import { describe as describeQueue, dequeue, emptyQueue, enqueue, move as moveQueue, removeAt } from "./queue.js";
 import { bar, contextLevel, fmtDuration, fmtRate, fmtTokens, summarize, tokensPerSecond } from "./format.js";
 import { LEDGER_KEY, cacheHitRatio, dayTotal, emptyLedger, normalizeLedger, recordTurn, recentTotal } from "./ledger.js";
@@ -43,6 +44,7 @@ let counters = createCounters();
 let companion = emptyCompanion();
 let lens = createLens();
 let queue = emptyQueue();
+let latencies = createLatency();
 
 function resetSession() {
   totals = emptyTotals();
@@ -57,6 +59,7 @@ function resetSession() {
   counters = createCounters();
   lens = createLens();
   queue = emptyQueue();
+  latencies = createLatency();
 }
 
 /** Latest TTFT across recorded requests, or null. */
@@ -122,6 +125,7 @@ function bandRows(Box, Text) {
     ...queueRow(Box, Text),
     ...companionRow(Box, Text),
     ...lensRow(Box, Text),
+    ...latencyRow(Box, Text),
     ...hintRow(Box, Text),
   ];
 }
@@ -341,6 +345,14 @@ function lensRow(Box, Text) {
   return row(Box, Text, "lens", [Text({ key: "lens-text", color: COLOR.muted, children: [line] })]);
 }
 
+/** ⌀ Bash 3s · Read 1.2s · Edit 800ms */
+function latencyRow(Box, Text) {
+  if (!config.latency) return [];
+  const line = describeLatency(latencies);
+  if (!line) return [];
+  return row(Box, Text, "latency", [Text({ key: "latency-text", color: COLOR.muted, children: [`⌀ ${line}`] })]);
+}
+
 let lastCwd = null;
 let lastGit = null;
 let home = "";
@@ -438,12 +450,36 @@ function drawPane($, e) {
     ...activityRow(Box, Text),
     ...countersRow(Box, Text),
     ...agentsRow(Box, Text),
+    ...queueRow(Box, Text),
+    ...companionRow(Box, Text),
+    ...lensRow(Box, Text),
+    ...latencyRow(Box, Text),
     ...hintRow(Box, Text),
+    ...toolsRow(Box, Text),
     ...todayRow(Box, Text),
     ...guardRow(Box, Text),
   ];
 
   return Box({ key: "cc-shannon-pane", flexDirection: "column", children: rows });
+}
+
+/** The slowest tools, one per row, for the pane. */
+function toolsRow(Box, Text) {
+  if (!config.latency) return [];
+  const ranked = slowestLatency(latencies);
+  if (!ranked.length) return [];
+  return ranked.map((entry, index) =>
+    Box({
+      key: `tool-${index}`,
+      flexDirection: "row",
+      columnGap: 1,
+      children: [
+        Text({ color: COLOR.muted, children: [`${index + 1}.`] }),
+        Text({ color: entry.failed ? COLOR.danger : COLOR.primary, children: [entry.name] }),
+        Text({ color: COLOR.muted, children: [formatLatencyMs(entry.durationMs)] }),
+      ],
+    }),
+  );
 }
 
 /** ✔ 12 turns │ ↑40k ↓8k │ 62% cache */
@@ -513,8 +549,8 @@ export function register(on) {
     });
     await $.command.register({
       name: "shannon-toggle",
-      description: "Turn a feature on or off: companion, lens, queue",
-      argumentHint: "<companion|lens|queue>",
+      description: `Turn a feature on or off: ${Object.keys(DEFAULT_CONFIG).join(", ")}`,
+      argumentHint: `<${Object.keys(DEFAULT_CONFIG).join("|")}>`,
     });
     await $.command.register({
       name: "q",
@@ -593,6 +629,25 @@ export function register(on) {
     }, turnToolCount);
     $.ui.invalidate("ui.render");
 
+    // A turn is the natural sampling point for context growth. `session.measure`
+    // may only report once, which would leave the lens with a single sample and
+    // no growth to show.
+    try {
+      const usage = await $.session.usage();
+      if (usage?.context) {
+        lastContext = {
+          percent: usage.context.percent ?? null,
+          window: usage.context.window ?? lastContext?.window ?? null,
+        };
+        if (lastContext.percent !== null) lens = sample(lens, lastContext.percent);
+      }
+    } catch {
+      // Context sampling is best effort; a turn must still complete.
+    }
+
+    // Branch, dirty state, and ahead/behind can all change during a turn.
+    lastGit = await gitStatus($, lastCwd);
+
     // A queued prompt goes out when the turn ends. Submitting it here is safe
     // because the session is idle at this point.
     if (config.queue && queue.length) {
@@ -634,6 +689,7 @@ export function register(on) {
     // would re-enter itself while asking.
     if (e.tool === "AskUserQuestion") return next(e);
 
+    const startedAt = await $.clock.now();
     const entry = {
       id: `${e.tool}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: e.tool,
@@ -642,7 +698,12 @@ export function register(on) {
     runningTools = [...runningTools, entry];
     // The command is kept so the companion can tell a test run from any other
     // Bash call once the tool finishes.
-    tools.add(entry.id, { name: entry.name, target: entry.target, command: e.command ?? "" });
+    tools.add(entry.id, {
+      name: entry.name,
+      target: entry.target,
+      command: e.command ?? "",
+      startedAt,
+    });
     turnToolCount += 1;
     $.ui.invalidate("ui.render");
 
@@ -664,8 +725,15 @@ export function register(on) {
       const finished = tools.remove(entry.id);
       if (finished) {
         const succeeded = !(result?.isError || result?.deny);
+        const durationMs = Math.max(0, (await $.clock.now()) - finished.startedAt);
+        latencies = recordLatency(latencies, {
+          name: finished.name,
+          target: finished.target,
+          durationMs,
+          failed: !succeeded,
+        });
         counters = recordCompletion(counters, {
-          durationMs: Date.now() - finished.at,
+          durationMs,
           failed: !succeeded,
           label: finished.target ? `${finished.name}: ${finished.target}` : finished.name,
         });
