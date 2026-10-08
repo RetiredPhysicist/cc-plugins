@@ -1,0 +1,8 @@
+{
+  "name": "cc-shannon-bloom",
+  "description": "A Gource-style film of a Claude Code session: projects become constellations, sessions light up, subagents branch from their parents, and tool calls fly as sparks. Drawn live in a docked pane.",
+  "author": {
+    "name": "RetiredPhysicist",
+    "url": "https://github.com/RetiredPhysicist"
+  }
+}
