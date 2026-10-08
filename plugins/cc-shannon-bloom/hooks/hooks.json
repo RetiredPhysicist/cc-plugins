@@ -1,0 +1,6 @@
+{
+  "description": "cc-shannon-bloom hooks module",
+  "modules": [
+    "./register.js"
+  ]
+}
