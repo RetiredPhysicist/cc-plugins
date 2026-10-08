@@ -1,6 +1,6 @@
 {
   "name": "cc-shannon-mod",
-  "description": "Mission control for Claude Code: measured turn metrics, live activity, a risky-command guard, and a usage ledger.",
+  "description": "The cc-shannon-statusline HUD as a mod, plus measured turn metrics, live activity, a risky-command guard, a usage ledger, a prompt queue, and a context runway.",
   "author": {
     "name": "RetiredPhysicist",
     "url": "https://github.com/RetiredPhysicist"

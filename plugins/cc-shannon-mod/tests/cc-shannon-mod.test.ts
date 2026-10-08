@@ -9,10 +9,18 @@ import { expect, mock, test } from "claude-code/testing";
 function stubBase(
   on: (name: string, handler: unknown) => void,
   saved: Map<string, unknown>,
-  overrides: { status?: () => string; contextPercent?: () => number } = {},
+  overrides: {
+    status?: () => string;
+    contextPercent?: () => number;
+    cwd?: () => string;
+    counts?: () => string;
+    fsExists?: (path: string) => boolean;
+    fsList?: (path: string) => unknown[];
+    settings?: () => unknown;
+  } = {},
 ) {
-  on("session.start", () => ({ cwd: "/work" }));
-  on("session.cwd", () => ({ value: "/work" }));
+  on("session.start", () => ({ cwd: overrides.cwd?.() ?? "/work" }));
+  on("session.cwd", () => ({ value: overrides.cwd?.() ?? "/work" }));
   on("command.register", () => ({ value: undefined }));
   on("store.get", (_$, e: { key: string }) => ({ value: saved.get(e.key) }));
   on("store.set", (_$, e: { key: string; value: unknown }) => {
@@ -25,10 +33,21 @@ function stubBase(
     throw new Error("no config file");
   });
   on("fs.write", () => ({ value: undefined }));
+  // The config row reads the same sources the statusline does. The kit has no
+  // disk, so the defaults are "missing": every count starts at zero.
+  on("fs.exists", (_$, e: { path?: string }) => ({
+    value: overrides.fsExists ? overrides.fsExists(e?.path ?? "") : false,
+  }));
+  on("fs.list", (_$, e: { path?: string }) => {
+    if (overrides.fsList) return { value: overrides.fsList(e?.path ?? "") };
+    throw new Error("no directory");
+  });
+  on("settings.read", () => ({ value: overrides.settings ? overrides.settings() : {} }));
   on("process.run", (_$, e: { argv: string[] }) => ({
-    value:
-      e.argv.includes("--abbrev-ref")
-        ? { exitCode: 0, stdout: "main\n", stderr: "" }
+    value: e.argv.includes("--abbrev-ref")
+      ? { exitCode: 0, stdout: "main\n", stderr: "" }
+      : e.argv.includes("rev-list")
+        ? { exitCode: 0, stdout: overrides.counts?.() ?? "0\t0\n", stderr: "" }
         : { exitCode: 0, stdout: overrides.status?.() ?? "", stderr: "" },
   }));
   on("session.end", () => ({}));
@@ -322,7 +341,7 @@ test("shannon-guard toggles the guard off", async ($, on) => {
   expect(asked.length).toBe(0);
 });
 
-test("the rain strip draws one cell per band row", async ($, on) => {
+test("the rain strip draws the statusline's six columns per band row", async ($, on) => {
   const saved = new Map<string, unknown>();
   stubBase(on, saved);
   mock.clock(on);
@@ -351,7 +370,12 @@ test("the rain strip draws one cell per band row", async ($, on) => {
   const strip = await ui.find({ key: "rain-strip" });
   expect(strip).toBeDefined();
   // One cell per band row.
-  expect((strip?.children ?? []).length).toBeGreaterThan(0);
+  const stripRows = strip?.children ?? [];
+  expect(stripRows.length).toBeGreaterThan(0);
+  // Every row falls in RAIN_COLS columns, not a single cell.
+  for (const stripRow of stripRows) {
+    expect((stripRow.children ?? []).length).toBe(6);
+  }
   await ui.unmount();
 });
 
@@ -481,7 +505,7 @@ test("a spawned subagent is listed while it runs", async ($, on) => {
   on("agent.spawn", () => ({ model: "claude-test" }));
 
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
-  await $.agent.spawn({ agentId: "a1", type: "Explore", prompt: "look around" });
+  await $.agent.spawn({ tool_use_id: "a1", subagentType: "Explore", model: "claude-test", prompt: "look around" });
 
   const ui = await $.ui.mount({
     plugin: "cc-shannon-mod",
@@ -501,6 +525,7 @@ test("a spawned subagent is listed while it runs", async ($, on) => {
 
   const agents = JSON.stringify(await ui.find({ key: "row-agents" }));
   expect(agents).toContain("Explore");
+  expect(agents).toContain("[claude-test]");
   await ui.unmount();
 });
 
@@ -625,6 +650,113 @@ test("a turn refreshes the git row", async ($, on) => {
   const after = await mountBand($);
   expect(JSON.stringify(await after.find({ key: "row-project" }))).toContain("*");
   await after.unmount();
+});
+
+test("the project row shortens the path the way the statusline does", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved, { cwd: () => "/home/test/Documents/workbuddy/cc-plugins" });
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await mountBand($);
+
+  const project = JSON.stringify(await ui.find({ key: "row-project" }));
+  // `~` for home, then one initial per leading segment; the tail segment stays.
+  expect(project).toContain("~/D/w/cc-plugins");
+  expect(project).not.toContain("/home/test/Documents");
+  await ui.unmount();
+});
+
+test("the git row carries ahead, behind and file counts", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved, {
+    status: () => "?? new\n M edit\nA  added\n D gone\n",
+    counts: () => "2\t3\n",
+  });
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await mountBand($);
+
+  const project = JSON.stringify(await ui.find({ key: "row-project" }));
+  expect(project).toContain("↑3");
+  expect(project).toContain("↓2");
+  expect(project).toContain("!1");
+  expect(project).toContain("+1");
+  expect(project).toContain("✘1");
+  expect(project).toContain("?1");
+  await ui.unmount();
+});
+
+test("finished tools are counted by name", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Read", file_path: "/tmp/a" });
+  await $.tool.call({ tool: "Read", file_path: "/tmp/b" });
+
+  const ui = await mountBand($);
+  const counts = JSON.stringify(await ui.find({ key: "row-tool-counts" }));
+  expect(counts).toContain("Read");
+  expect(counts).toContain("×2");
+  await ui.unmount();
+});
+
+test("a TodoWrite call becomes the todo row", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  on("tool.call", () => ({ result: "ok" }));
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({
+    tool: "TodoWrite",
+    todos: [
+      { content: "write the tests", status: "completed" },
+      { content: "ship it", status: "in_progress" },
+    ],
+  });
+
+  const ui = await mountBand($);
+  const todos = JSON.stringify(await ui.find({ key: "row-todos" }));
+  expect(todos).toContain("write the tests");
+  expect(todos).toContain("ship it");
+  expect(todos).toContain("1/2");
+  await ui.unmount();
+});
+
+test("the config row counts CLAUDE.md, MCPs, hooks and skills", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved, {
+    fsExists: () => true,
+    fsList: (path) =>
+      path.endsWith("/rules")
+        ? [
+            { name: "a.mdc", kind: "file" },
+            { name: "b.mdc", kind: "file" },
+            { name: "notes.txt", kind: "file" },
+          ]
+        : [
+            { name: "one", kind: "dir" },
+            { name: "two", kind: "dir" },
+          ],
+    settings: () => ({ mcpServers: { a: {}, b: {}, c: {} }, hooks: { PreToolUse: [], Stop: [] } }),
+  });
+  mock.clock(on);
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await mountBand($, 12);
+
+  const config = JSON.stringify(await ui.find({ key: "row-config" }));
+  expect(config).toContain("CLAUDE.md");
+  expect(config).toContain("rules");
+  expect(config).toContain("MCPs");
+  expect(config).toContain("hooks");
+  expect(config).toContain("Skills");
+  await ui.unmount();
 });
 
 /** Mount the band, which is where the compact rows live. */
