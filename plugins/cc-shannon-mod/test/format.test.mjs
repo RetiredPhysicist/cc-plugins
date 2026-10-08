@@ -4,7 +4,9 @@ import {
   bar,
   contextLevel,
   fmtDuration,
+  fmtLatency,
   fmtRate,
+  fmtSessionDuration,
   fmtTokens,
   summarize,
   tokensPerSecond,
@@ -13,8 +15,9 @@ import {
 test("formats token counts compactly", () => {
   assert.equal(fmtTokens(0), "0");
   assert.equal(fmtTokens(999), "999");
-  assert.equal(fmtTokens(1000), "1k");
+  assert.equal(fmtTokens(1000), "1.0k");
   assert.equal(fmtTokens(1234), "1.2k");
+  assert.equal(fmtTokens(20_000), "20.0k");
   assert.equal(fmtTokens(1_234_567), "1.2M");
 });
 
@@ -26,15 +29,27 @@ test("token formatting survives bad input", () => {
 
 test("formats durations across every unit", () => {
   assert.equal(fmtDuration(250), "250ms");
-  assert.equal(fmtDuration(1500), "1.5s");
+  assert.equal(fmtDuration(1500), "2s");
   assert.equal(fmtDuration(45_000), "45s");
-  assert.equal(fmtDuration(90_000), "1m30s");
-  assert.equal(fmtDuration(3_600_000), "1h0m");
+  assert.equal(fmtDuration(90_000), "1m 30s");
+  assert.equal(fmtDuration(3_600_000), "1h 0m");
 });
 
 test("duration survives bad input", () => {
   assert.equal(fmtDuration(-1), "0s");
   assert.equal(fmtDuration(Number.NaN), "0s");
+});
+
+test("formats latency as the statusline's throughput row does", () => {
+  assert.equal(fmtLatency(840), "840ms");
+  assert.equal(fmtLatency(1240), "1.24s");
+  assert.equal(fmtLatency(12345), "12.35s");
+});
+
+test("formats the session clock as the statusline's project row does", () => {
+  assert.equal(fmtSessionDuration(30_000), "<1m");
+  assert.equal(fmtSessionDuration(720_000), "12m");
+  assert.equal(fmtSessionDuration(3_900_000), "1h 5m");
 });
 
 test("computes a token rate", () => {

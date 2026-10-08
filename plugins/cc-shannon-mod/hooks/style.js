@@ -50,8 +50,11 @@ export const SEPARATOR = "│";
 
 const RAIN_CHARS = "ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ0123456789λΨΩΔΦ";
 
-/** How many columns the rain strip takes, including its gap. */
-export const RAIN_WIDTH = 3;
+/** How many character columns the rain falls in, matching the statusline. */
+export const RAIN_COLS = 6;
+
+/** How many cells the rain strip takes, including one gap between columns. */
+export const RAIN_WIDTH = RAIN_COLS + (RAIN_COLS - 1);
 
 const RAIN_SPEED_MS = 900;
 const RAIN_COL_OFFSET_MS = 280;

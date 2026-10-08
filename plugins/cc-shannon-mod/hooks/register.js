@@ -19,11 +19,23 @@ import { COMPANION_KEY, classify, describe as describeCompanion, emptyCompanion,
 import { createLens, describe as describeLens, sample } from "./lens.js";
 import { createLatency, describe as describeLatency, formatMs as formatLatencyMs, record as recordLatency, slowest as slowestLatency } from "./latency.js";
 import { describe as describeQueue, dequeue, emptyQueue, enqueue, move as moveQueue, removeAt } from "./queue.js";
-import { bar, contextLevel, fmtDuration, fmtRate, fmtTokens, summarize, tokensPerSecond } from "./format.js";
+import {
+  bar,
+  contextLevel,
+  fmtDuration,
+  fmtLatency,
+  fmtRate,
+  fmtSessionDuration,
+  fmtTokens,
+  summarize,
+  tokensPerSecond,
+} from "./format.js";
 import { LEDGER_KEY, cacheHitRatio, dayTotal, emptyLedger, normalizeLedger, recordTurn, recentTotal } from "./ledger.js";
 import { accumulate, createRing, emptyTotals, startRequest } from "./metrics.js";
+import { gitDetails, parseFileStats } from "./git.js";
+import { shortenDisplayPath } from "./path.js";
 import { assessCommand, describeRisks } from "./risk.js";
-import { COLOR, ICON, RAIN_WIDTH, SEPARATOR, rainCell } from "./style.js";
+import { COLOR, ICON, RAIN_COLS, RAIN_WIDTH, SEPARATOR, rainCell } from "./style.js";
 
 const PANE = "cc-shannon";
 
@@ -45,6 +57,12 @@ let companion = emptyCompanion();
 let lens = createLens();
 let queue = emptyQueue();
 let latencies = createLatency();
+/** What the statusline's config row counts, refreshed with the git status. */
+let configCounts = { claudeMd: 0, rules: 0, mcp: 0, hooks: 0, skills: 0 };
+/** The todo list a TodoWrite call last wrote, as the statusline reads it. */
+let todos = [];
+/** Successful tool completions by name, for the statusline's `Read ×12` row. */
+let toolCounts = new Map();
 
 function resetSession() {
   totals = emptyTotals();
@@ -60,6 +78,8 @@ function resetSession() {
   lens = createLens();
   queue = emptyQueue();
   latencies = createLatency();
+  todos = [];
+  toolCounts = new Map();
 }
 
 /** Latest TTFT across recorded requests, or null. */
@@ -119,7 +139,10 @@ function bandRows(Box, Text) {
     ...projectRow(Box, Text),
     ...contextRow(Box, Text),
     ...timingRow(Box, Text),
+    ...configRow(Box, Text),
+    ...toolCountsRow(Box, Text),
     ...activityRow(Box, Text),
+    ...todosRow(Box, Text),
     ...countersRow(Box, Text),
     ...agentsRow(Box, Text),
     ...queueRow(Box, Text),
@@ -131,10 +154,11 @@ function bandRows(Box, Text) {
 }
 
 /**
- * A rain strip down the left edge, one cell per row.
+ * A rain strip down the left edge, one row of columns per band row.
  *
  * The statusline animates this by repainting a subprocess; here a timer asks
- * for a redraw, so the strip moves the same way.
+ * for a redraw, so the strip moves the same way. Every column gets its own
+ * phase offset, matching the statusline's multi-column fall.
  */
 function rainWrap(Box, Text, rows) {
   const now = Date.now();
@@ -148,8 +172,19 @@ function rainWrap(Box, Text, rows) {
         flexDirection: "column",
         width: RAIN_WIDTH,
         children: rows.map((_, index) => {
-          const cell = rainCell(index, now, rows.length);
-          return Text({ key: `rain-${index}`, color: cell.color, children: [cell.char] });
+          const cells = [];
+          for (let column = 0; column < RAIN_COLS; column++) {
+            const cell = rainCell(index, now, rows.length, column);
+            cells.push(
+              Text({ key: `rain-${index}-${column}`, color: cell.color, children: [cell.char] }),
+            );
+          }
+          return Box({
+            key: `rain-${index}`,
+            flexDirection: "row",
+            columnGap: 1,
+            children: cells,
+          });
         }),
       }),
       Box({ key: "cc-shannon-band", flexDirection: "column", children: rows }),
@@ -176,22 +211,32 @@ function row(Box, Text, key, parts) {
 function projectRow(Box, Text) {
   const parts = [];
   if (lastCwd) {
-    parts.push(Text({ key: "path", color: COLOR.warm, children: [`${ICON.path} ${lastCwd}`] }));
+    const display = shortenDisplayPath(lastCwd, { homeDir: home, maxLength: 30 });
+    parts.push(Text({ key: "path", color: COLOR.warm, children: [`${ICON.path} ${display}`] }));
   }
   if (lastGit) {
     const dirty = lastGit.isDirty ? "*" : "";
-    let text = `${ICON.branch} ${lastGit.branch}${dirty}`;
-    if (lastGit.ahead > 0) text += ` ↑${lastGit.ahead}`;
-    if (lastGit.behind > 0) text += ` ↓${lastGit.behind}`;
-    parts.push(Text({ key: "git", color: COLOR.cool, children: [text] }));
+    parts.push(Text({ key: "git", color: COLOR.cool, children: [`${ICON.branch} ${lastGit.branch}${dirty}`] }));
+    // Ahead/behind and the file counts ride beside the branch, matching the
+    // statusline's `⎇ main* ↑2 !3 +1 ✘1 ?2`.
+    for (const [index, detail] of gitDetails(lastGit).entries()) {
+      const color =
+        detail.tone === "positive" ? COLOR.positive : detail.tone === "danger" ? COLOR.danger : COLOR.muted;
+      parts.push(Text({ key: `git-${index}`, color, children: [detail.text] }));
+    }
   }
   if (startedAt) {
     parts.push(
       Text({
         key: "clock",
         color: COLOR.muted,
-        children: [`${ICON.clock} ${fmtDuration(Date.now() - startedAt)}`],
+        children: [`${ICON.clock} ${fmtSessionDuration(Date.now() - startedAt)}`],
       }),
+    );
+  }
+  if (permissionMode) {
+    parts.push(
+      Text({ key: "permission", color: COLOR.neutral, children: [`${ICON.lock} ${permissionMode}`] }),
     );
   }
   return row(Box, Text, "project", parts);
@@ -211,7 +256,23 @@ function contextRow(Box, Text) {
       level === "critical" ? COLOR.danger : level === "warning" ? COLOR.warm : COLOR.positive;
     // The icon belongs with its value, so the separator only falls between
     // distinct facts.
-    parts.push(Text({ key: "ctx", color, children: [`${ICON.context} ${bar(used, 10)} ${Math.round(used)}%`] }));
+    let ctxText = `${ICON.context} ${bar(used, 10)} ${Math.round(used)}%`;
+    const window = lastContext?.window ?? null;
+    // The window label, spelled as the statusline spells it: 200000 -> "200k",
+    // 1000000 -> "1.0M".
+    if (window) {
+      const label =
+        window >= 1_000_000
+          ? `${(window / 1_000_000).toFixed(1)}M`
+          : window >= 1000
+            ? `${Math.round(window / 1000)}k`
+            : `${window}`;
+      ctxText += ` (${label})`;
+    }
+    parts.push(Text({ key: "ctx", color, children: [ctxText] }));
+    if (used >= 85) {
+      parts.push(Text({ key: "ctx-warn", color: COLOR.danger, children: [`${ICON.warn} high usage`] }));
+    }
   }
 
   const latest = recent.latest();
@@ -230,16 +291,25 @@ function contextRow(Box, Text) {
   return row(Box, Text, "context", parts);
 }
 
-/** » TTFT 840ms │ 62.4 tok/s │ 8 req */
+/** » TTFT 840ms │ Decode ~62.4 tok/s · ~312 tok │ 8 req */
 function timingRow(Box, Text) {
   const parts = [];
   const ttft = latestTtft();
   if (ttft !== null) {
-    parts.push(Text({ key: "ttft", color: COLOR.muted, children: [`${ICON.speed} TTFT ${fmtDuration(ttft)}`] }));
+    parts.push(Text({ key: "ttft", color: COLOR.muted, children: [`${ICON.speed} TTFT ${fmtLatency(ttft)}`] }));
   }
   const decode = sessionDecodeRate();
-  if (decode !== null) {
-    parts.push(Text({ key: "decode", color: COLOR.primary, children: [`${fmtRate(decode)} tok/s`] }));
+  const latest = recent.latest();
+  if (latest && latest.outputTokens > 0) {
+    // Same wording as the statusline's throughput row, but measured here:
+    // `Decode ~62.4 tok/s · ~312 tok`, and the bare output count when no rate
+    // could be computed.
+    const rate = decode === null ? null : fmtRate(decode);
+    const text =
+      rate === null
+        ? `Decode ~${fmtTokens(latest.outputTokens)} tok`
+        : `Decode ~${rate} tok/s · ~${fmtTokens(latest.outputTokens)} tok`;
+    parts.push(Text({ key: "decode", color: COLOR.primary, children: [text] }));
   }
   if (totals.requests > 0) {
     parts.push(Text({ key: "reqs", color: COLOR.muted, children: [`${totals.requests} req`] }));
@@ -253,13 +323,67 @@ function activityRow(Box, Text) {
     Text({
       key: `run-${index}`,
       color: COLOR.warm,
-      children: [`${ICON.running} ${tool.name}${tool.target ? `: ${tool.target}` : ""}`],
+      children: [
+        `${ICON.running} ${tool.name}${tool.target ? `: ${tool.target}` : ""} (${fmtDuration(
+          Date.now() - tool.startedAt,
+        )})`,
+      ],
     }),
   );
   if (guardEvents.length) {
     parts.push(Text({ key: "guarded", color: COLOR.danger, children: [`${ICON.warn} ${guardEvents.length}`] }));
   }
   return row(Box, Text, "activity", parts);
+}
+
+/**
+ * Finished tools by name: `✔ Read ×12 │ ✔ Edit ×7`.
+ *
+ * The statusline re-reads the transcript to count these; the mod counts them as
+ * they finish, so the row means the same thing from live data.
+ */
+const COUNTED_TOOLS = ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent"];
+
+function toolCountsRow(Box, Text) {
+  if (toolCounts.size === 0) return [];
+  const parts = [];
+  for (const name of COUNTED_TOOLS) {
+    const count = toolCounts.get(name) ?? 0;
+    if (count > 0) {
+      parts.push(
+        Text({ key: `count-${name}`, color: COLOR.positive, children: [`${ICON.done} ${name} ×${count}`] }),
+      );
+    }
+  }
+  return row(Box, Text, "tool-counts", parts);
+}
+
+/**
+ * The todo list's most recent state: `✔ tests │ ↻ build │ ▸ docs (1/3)`.
+ *
+ * A TodoWrite call carries the whole list, so the last one to run is the
+ * current state — what the statusline reads from the transcript.
+ */
+function todosRow(Box, Text) {
+  if (!todos.length) return [];
+  const done = todos.filter((todo) => todo.status === "completed").length;
+  const parts = todos.slice(0, 5).map((todo, index) => {
+    const icon =
+      todo.status === "completed" ? ICON.done : todo.status === "in_progress" ? ICON.running : ICON.todo;
+    const color =
+      todo.status === "completed"
+        ? COLOR.positive
+        : todo.status === "in_progress"
+          ? COLOR.warm
+          : COLOR.muted;
+    const content = String(todo.content ?? "");
+    const label = content.length > 40 ? `${content.slice(0, 40)}…` : content;
+    return Text({ key: `todo-${index}`, color, children: [`${icon} ${label}`] });
+  });
+  if (todos.length > 1) {
+    parts.push(Text({ key: "todo-progress", color: COLOR.muted, children: [`(${done}/${todos.length})`] }));
+  }
+  return row(Box, Text, "todos", parts);
 }
 
 /**
@@ -295,7 +419,7 @@ function agentsRow(Box, Text) {
       Text({
         key: `agent-${index}`,
         color: COLOR.accent,
-        children: [`${ICON.running} ${agent.type}`],
+        children: [`${ICON.running} ${agent.type}${agent.model ? ` [${agent.model}]` : ""}`],
       }),
     ),
   );
@@ -316,6 +440,41 @@ function hintRow(Box, Text) {
   });
   if (!hint) return [];
   return row(Box, Text, "hint", [Text({ key: "hint-text", color: COLOR.warm, children: [hint] })]);
+}
+
+/**
+ * What the session is configured with: `※ ×3 CLAUDE.md │ ≡ ×2 rules │ ⊕ ×4 MCPs`.
+ *
+ * The statusline counts these on every redraw by reading the settings files and
+ * the skills directory. The mod reads the same sources through `$.fs` and
+ * `$.settings.read` once per session, then refreshes them with the git row.
+ */
+function configRow(Box, Text) {
+  const parts = [];
+  if (configCounts.claudeMd > 0) {
+    parts.push(
+      Text({ key: "cfg-claude", color: COLOR.warm, children: [`${ICON.claudeMd} ×${configCounts.claudeMd} CLAUDE.md`] }),
+    );
+  }
+  if (configCounts.rules > 0) {
+    parts.push(
+      Text({ key: "cfg-rules", color: COLOR.muted, children: [`${ICON.rules} ×${configCounts.rules} rules`] }),
+    );
+  }
+  if (configCounts.mcp > 0) {
+    parts.push(Text({ key: "cfg-mcp", color: COLOR.cool, children: [`${ICON.mcp} ×${configCounts.mcp} MCPs`] }));
+  }
+  if (configCounts.hooks > 0) {
+    parts.push(
+      Text({ key: "cfg-hooks", color: COLOR.warm, children: [`${ICON.hook} ×${configCounts.hooks} hooks`] }),
+    );
+  }
+  if (configCounts.skills > 0) {
+    parts.push(
+      Text({ key: "cfg-skills", color: COLOR.accent, children: [`${ICON.skill} ×${configCounts.skills} Skills`] }),
+    );
+  }
+  return row(Box, Text, "config", parts);
 }
 
 /** ▸ the next prompt waiting to be sent (+2) */
@@ -356,6 +515,8 @@ function latencyRow(Box, Text) {
 let lastCwd = null;
 let lastGit = null;
 let home = "";
+/** The permission mode a hook last reported, as the statusline's `⊟ auto`. */
+let permissionMode = null;
 /**
  * Tokens seen in the current turn, summed from its requests.
  *
@@ -403,16 +564,90 @@ async function gitStatus($, cwd) {
   try {
     const branch = await $.process.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     if (branch.exitCode !== 0) return null;
-    const porcelain = await $.process.run(["git", "status", "--porcelain"], { cwd });
+    const porcelain = await $.process.run(["git", "--no-optional-locks", "status", "--porcelain"], { cwd });
+    const dirty = porcelain.stdout.trim().length > 0;
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const counts = await $.process.run(
+        ["git", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        { cwd },
+      );
+      if (counts.exitCode === 0) {
+        const [behindText, aheadText] = counts.stdout.trim().split(/\s+/);
+        behind = parseInt(behindText, 10) || 0;
+        ahead = parseInt(aheadText, 10) || 0;
+      }
+    } catch {
+      // No upstream, so ahead/behind stay zero.
+    }
     return {
       branch: branch.stdout.trim(),
-      isDirty: porcelain.stdout.trim().length > 0,
-      ahead: 0,
-      behind: 0,
+      isDirty: dirty,
+      ahead,
+      behind,
+      fileStats: dirty ? parseFileStats(porcelain.stdout) : null,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * The counts behind the config row, from the same sources the statusline reads:
+ * CLAUDE.md files under the project and home, `.claude/rules/*.mdc`, the MCP
+ * servers the merged settings name, the hook event names they configure, and the
+ * directories under `~/.claude/skills`.
+ *
+ * Every read is best effort: a missing file or directory counts as zero rather
+ * than failing the session.
+ */
+async function countConfigs($, cwd, homeDir) {
+  const counts = { claudeMd: 0, rules: 0, mcp: 0, hooks: 0, skills: 0 };
+
+  const claudeMdPaths = [
+    cwd ? `${cwd}/CLAUDE.md` : null,
+    cwd ? `${cwd}/.claude/CLAUDE.md` : null,
+    homeDir ? `${homeDir}/.claude/CLAUDE.md` : null,
+  ];
+  for (const path of claudeMdPaths) {
+    if (!path) continue;
+    try {
+      if (await $.fs.exists(path)) counts.claudeMd += 1;
+    } catch {
+      // A path that cannot be read is not a count.
+    }
+  }
+
+  if (cwd) {
+    try {
+      const entries = await $.fs.list(`${cwd}/.claude/rules`);
+      counts.rules = entries.filter((entry) => entry.name.endsWith(".mdc")).length;
+    } catch {
+      // No rules directory.
+    }
+  }
+
+  try {
+    const settings = await $.settings.read();
+    const servers = settings?.mcpServers;
+    if (servers && typeof servers === "object") counts.mcp = Object.keys(servers).length;
+    const hooks = settings?.hooks;
+    if (hooks && typeof hooks === "object") counts.hooks = Object.keys(hooks).length;
+  } catch {
+    // Settings a host does not keep count as nothing.
+  }
+
+  if (homeDir) {
+    try {
+      const entries = await $.fs.list(`${homeDir}/.claude/skills`);
+      counts.skills = entries.filter((entry) => entry.kind === "dir" || entry.isLink).length;
+    } catch {
+      // No skills directory.
+    }
+  }
+
+  return counts;
 }
 
 /**
@@ -447,7 +682,10 @@ function drawPane($, e) {
     ...projectRow(Box, Text),
     ...contextRow(Box, Text),
     ...timingRow(Box, Text),
+    ...configRow(Box, Text),
+    ...toolCountsRow(Box, Text),
     ...activityRow(Box, Text),
+    ...todosRow(Box, Text),
     ...countersRow(Box, Text),
     ...agentsRow(Box, Text),
     ...queueRow(Box, Text),
@@ -529,6 +767,7 @@ export function register(on) {
     config = await readConfig($);
     lastCwd = await $.session.cwd();
     lastGit = await gitStatus($, lastCwd);
+    configCounts = await countConfigs($, lastCwd, home);
 
     const saved = await $.store.get(LEDGER_KEY);
     ledger = normalizeLedger(saved);
@@ -647,6 +886,7 @@ export function register(on) {
 
     // Branch, dirty state, and ahead/behind can all change during a turn.
     lastGit = await gitStatus($, lastCwd);
+    configCounts = await countConfigs($, lastCwd, home);
 
     // A queued prompt goes out when the turn ends. Submitting it here is safe
     // because the session is idle at this point.
@@ -689,11 +929,24 @@ export function register(on) {
     // would re-enter itself while asking.
     if (e.tool === "AskUserQuestion") return next(e);
 
+    if (typeof e.permission_mode === "string" && e.permission_mode) {
+      permissionMode = e.permission_mode;
+    }
+    // TodoWrite carries the whole list, so the newest call is the current state.
+    if (e.tool === "TodoWrite" && Array.isArray(e.todos)) {
+      todos = e.todos.map((todo) => ({
+        content: String(todo?.content ?? ""),
+        status: String(todo?.status ?? "pending"),
+      }));
+      $.ui.invalidate("ui.render");
+    }
+
     const startedAt = await $.clock.now();
     const entry = {
       id: `${e.tool}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: e.tool,
       target: summarizeTarget(e),
+      startedAt,
     };
     runningTools = [...runningTools, entry];
     // The command is kept so the companion can tell a test run from any other
@@ -737,6 +990,11 @@ export function register(on) {
           failed: !succeeded,
           label: finished.target ? `${finished.name}: ${finished.target}` : finished.name,
         });
+        // The statusline counts completed calls by name; failures are counted
+        // separately by the counters row, so they stay out of this row.
+        if (succeeded) {
+          toolCounts.set(finished.name, (toolCounts.get(finished.name) ?? 0) + 1);
+        }
 
         // A passing test run or a commit feeds the companion. A failure does
         // not, so a red build never grows it.
@@ -754,8 +1012,12 @@ export function register(on) {
 
   // ── subagents, which the statusline can only infer from the transcript ──
   on("agent.spawn", async ($, e, next) => {
-    agents.add(`${e.agentId ?? e.type ?? "agent"}-${Date.now()}`, {
-      type: e.type ?? "agent",
+    // The spawn event names the resolved type `subagentType`; `type` is not a
+    // field here, so reading it alone listed every subagent as "agent".
+    agents.add(`${e.tool_use_id ?? e.subagentType ?? "agent"}-${Date.now()}`, {
+      type: e.subagentType ?? "agent",
+      model: e.model ?? e.parentModel ?? null,
+      description: e.description ?? "",
     });
     $.ui.invalidate("ui.render");
     return next(e);

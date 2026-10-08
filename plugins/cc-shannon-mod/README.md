@@ -24,19 +24,23 @@ Above the prompt, one row per kind of fact. A row with nothing to say is omitted
 so an idle session stays short.
 
 ```
-ｦ  ⌘ ~/D/project │ ⎇ main* ↑2
-ｧ  λ Opus · claude-opus-4-6 │ ⊡ ██████░░░░ 58% │ ↑36k ↓300 ⊗8.5k
-ｩ  » TTFT 840ms │ 62.4 tok/s │ 8 req
-ｼ  ↻ Bash: npm test
-ｽ  ✔ 12 │ ⚠ 1 │ ⌀ 820ms
-ｻ  ↻ Explore
-▸  say the queued thing (+1)
-(•‿•) Lv3 ✔4 ⎇2
-⊡ +2.4%/turn · ~7 turns left
-⌀ Bash 3s · Read 1.2s
+ｦｧｨｩｪｫ  ⌘ ~/D/project │ ⎇ main* ↑2 !3 +1 │ ✦ 12m │ ⊟ auto
+ｬｭｮｯｰｱ  λ Opus · claude-opus-4-6 │ ⊡ ██████░░░░ 58% (200k) │ ↑36k ↓300 ⊗8.5k
+ｲｳｴｵｶｷ  ※ ×3 CLAUDE.md │ ≡ ×2 rules │ ⊕ ×4 MCPs │ ↩ ×12 hooks │ ★ ×5 Skills
+ｸｹｺｻｼｽ  » TTFT 840ms │ Decode 62.4 tok/s │ 8 req
+ｾｿｰｱｲｳ  ↻ Bash: npm test (3s)
+ｴｵｶｷｸｹ  ✔ Read ×12 │ ✔ Edit ×7 │ ✔ Bash ×4
+ｺｻｼｽｾｿ  ✔ write the tests │ ↻ ship it (1/2)
+012345  ✔ 12 │ ⚠ 1 │ ⌀ 820ms
+6789λΨ  ↻ Explore
+ΩΔΦ012  ▸ say the queued thing (+1)
+345678  (•‿•) Lv3 ✔4 ⎇2
+9λΨΩΔΦ  ⊡ +2.4%/turn · ~7 turns left
+012345  ⌀ Bash 3s · Read 1.2s
 ```
 
-The left column is the statusline's matrix rain, driven by a redraw timer.
+The left block is the statusline's six-column matrix rain, driven by a redraw
+timer.
 
 ## `/shannon`
 
