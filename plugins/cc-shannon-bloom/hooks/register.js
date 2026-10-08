@@ -118,8 +118,10 @@ export function register(on) {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e);
     const { Box, Text, Raster } = $.ui.resolve(e);
-    const columns = Math.max(20, (e.viewport?.columns ?? 120) - 4);
-    const rows = Math.max(6, (e.viewport?.rows ?? 24) - 4);
+    // `bodyColumns` is the pane's own body width when docked; inline there is
+    // none, so fall back to the viewport.
+    const columns = Math.max(20, Math.floor(e.props?.bodyColumns ?? (e.viewport?.columns ?? 120) - 4));
+    const rows = Math.max(6, Math.floor(e.props?.scroll?.bodyRows ?? (e.viewport?.rows ?? 24) - 4));
     const now = new Date();
     const timeLabel = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const hourOfDay = now.getHours() + now.getMinutes() / 60;
