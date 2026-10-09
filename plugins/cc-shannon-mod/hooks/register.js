@@ -35,7 +35,7 @@ import { accumulate, createRing, emptyTotals, startRequest } from "./metrics.js"
 import { gitDetails, parseFileStats } from "./git.js";
 import { guardNotice, shouldNotify } from "./notify.js";
 import { shortenDisplayPath } from "./path.js";
-import { assessCommand, describeRisks } from "./risk.js";
+import { assessCommand, describeRisks, guardFailure } from "./risk.js";
 import { COLOR, ICON, RAIN_COLS, RAIN_WIDTH, SEPARATOR, rainCell } from "./style.js";
 
 const PANE = "cc-shannon";
@@ -964,7 +964,17 @@ export function register(on) {
     let result;
     try {
       if (guardEnabled && e.tool === "Bash") {
-        const decision = await guardCommand($, e);
+        // A gating hook that throws is fail-open in the engine: the tool runs
+        // anyway. For every other hook that is reasonable, but this one is a
+        // safety guard, so a crash inside it must not silently let a command
+        // through. The catch turns any guard failure into a refusal, and says
+        // so plainly rather than pretending a risk was found.
+        let decision;
+        try {
+          decision = await guardCommand($, e);
+        } catch {
+          decision = guardFailure();
+        }
         if (decision) {
           guardEvents = [...guardEvents, decision].slice(-20);
           if (!decision.allowed) {
