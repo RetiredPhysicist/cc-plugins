@@ -73,7 +73,9 @@ guard state:
   many tools at once produce one line saying so. Nothing is shown when the
   session is healthy.
 - **A guard.** Before a shell command runs, risky ones ask first. When nobody
-  answers — a `claude -p` run — the command is refused.
+  answers — a `claude -p` run — the command is refused. With notifications on,
+  the guard also raises a native one, so a command stopped in a background pane
+  is not missed.
 - **A ledger.** Each turn's tokens and tool calls go into a per-day bucket that
   survives restarts and feeds the rollup.
 - **A companion.** A passing test run or a commit feeds a small pet; red builds
@@ -93,7 +95,7 @@ guard state:
 | `/shannon` | Open the pane |
 | `/shannon-guard` | Turn the risky-command guard on or off |
 | `/shannon-rain` | Turn the matrix rain on or off |
-| `/shannon-toggle <name>` | Turn `companion`, `lens`, `queue`, or `latency` on or off |
+| `/shannon-toggle <name>` | Turn `companion`, `lens`, `queue`, `latency`, or `notify` on or off |
 | `/q <text>` | Queue a prompt for the end of the current turn |
 | `/shannon-queue [list\|drop n\|up n\|down n]` | Manage queued prompts |
 
@@ -107,7 +109,8 @@ guard state:
   "companion": true,
   "lens": true,
   "queue": true,
-  "latency": true
+  "latency": true,
+  "notify": false
 }
 ```
 
@@ -120,6 +123,21 @@ The file is optional; `/shannon-rain` and `/shannon-toggle` write it for you.
 | `lens` | `true` | Show context growth and remaining turns. |
 | `queue` | `true` | Enable `/q` and the queue row. |
 | `latency` | `true` | Show the slowest measured tools. |
+| `notify` | `false` | Raise a native notification when the guard stops a command. |
+
+### Notifications
+
+`notify` is off by default. Turn it on with `/shannon-toggle notify`, or by
+setting the key to `true`.
+
+It uses Claude Code's own `$.ui.notify`, added in 2.1.295, so the notification
+goes through whatever channel your notification setting names. On an older
+Claude Code the call is absent and the setting does nothing — the guard itself
+is unaffected either way. In a headless run there is no surface to notify and
+the call reports `no-surface`, which is also harmless.
+
+The notification names both the risk and the command, since a banner that only
+says something was blocked sends you back to the terminal to find out what.
 
 ## The guard
 
