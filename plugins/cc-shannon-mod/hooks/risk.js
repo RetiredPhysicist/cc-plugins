@@ -81,4 +81,21 @@ export function describeRisks(risks) {
   return risks.map((risk) => risk.because).join("; ");
 }
 
+/**
+ * The decision to use when the guard itself fails.
+ *
+ * A gating hook that throws is fail-open in the engine: the tool runs anyway.
+ * That is a reasonable default for hooks in general, but wrong for a safety
+ * guard, so the guard refuses for itself when it cannot finish. This is not a
+ * judgement about the command, and the wording says so rather than inventing a
+ * risk the guard never found.
+ */
+export function guardFailure() {
+  return {
+    allowed: false,
+    reason: "the guard could not finish checking this command",
+    denial: "The guard failed before it could judge this command. Re-run it if you meant it.",
+  };
+}
+
 export const RISK_RULE_IDS = RULES.map((rule) => rule.id);

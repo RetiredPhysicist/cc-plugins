@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RISK_RULE_IDS, assessCommand, describeRisks } from "../hooks/risk.js";
+import { RISK_RULE_IDS, assessCommand, describeRisks, guardFailure } from "../hooks/risk.js";
 
 function ids(command) {
   return assessCommand(command).map((risk) => risk.id);
@@ -56,4 +56,15 @@ test("describes risks for a prompt", () => {
 
 test("rule ids are unique", () => {
   assert.equal(new Set(RISK_RULE_IDS).size, RISK_RULE_IDS.length);
+});
+
+test("a guard that cannot finish refuses rather than allowing", () => {
+  // A gating hook that throws is fail-open in Claude Code, so the guard has to
+  // refuse for itself. This is the decision it uses when that happens.
+  const decision = guardFailure();
+  assert.equal(decision.allowed, false, "the command must not be allowed");
+  assert.match(decision.reason, /could not finish/);
+  // It must not invent a risk it never found.
+  assert.doesNotMatch(decision.reason, /recursive|force|delete|sql/i);
+  assert.ok(decision.denial.length > 0, "the model gets an explanation");
 });
