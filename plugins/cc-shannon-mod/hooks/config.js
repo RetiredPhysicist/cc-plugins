@@ -17,6 +17,13 @@ export const DEFAULT_CONFIG = {
   queue: true,
   /** Slowest measured tools. */
   latency: true,
+  /**
+   * A native notification when the guard stops a command.
+   *
+   * Off by default: it needs Claude Code 2.1.295 or later, and it reaches the
+   * person outside the session, so turning it on is their call.
+   */
+  notify: false,
 };
 
 /** Where the config lives, alongside the statusline's own toggles under ~/.shannon. */
