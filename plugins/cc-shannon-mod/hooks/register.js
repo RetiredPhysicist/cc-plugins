@@ -33,6 +33,7 @@ import {
 import { LEDGER_KEY, cacheHitRatio, dayTotal, emptyLedger, normalizeLedger, recordTurn, recentTotal } from "./ledger.js";
 import { accumulate, createRing, emptyTotals, startRequest } from "./metrics.js";
 import { gitDetails, parseFileStats } from "./git.js";
+import { guardNotice, shouldNotify } from "./notify.js";
 import { shortenDisplayPath } from "./path.js";
 import { assessCommand, describeRisks } from "./risk.js";
 import { COLOR, ICON, RAIN_COLS, RAIN_WIDTH, SEPARATOR, rainCell } from "./style.js";
@@ -1145,6 +1146,27 @@ function summarizeTarget(e) {
 }
 
 /**
+ * Raise a native notification when the guard acts, if the person asked for one.
+ *
+ * `$.ui.notify` arrived in Claude Code 2.1.295 and takes one string. Everything
+ * is best effort: an older host has no such call, and a headless session has no
+ * surface to send through, so a failure here must never affect the guard.
+ *
+ * The call is spelled `$.ui.notify(...)` here, at the call site: a noun of `$`
+ * cannot be bound to a value, so a capability check has to wrap the call rather
+ * than stash the function.
+ */
+async function notifyGuard($, event) {
+  if (!shouldNotify(config)) return;
+  try {
+    await $.ui.notify(guardNotice(event));
+  } catch {
+    // An older host has no such call, and a headless one has no surface; a
+    // notification that cannot be raised is not a guard failure.
+  }
+}
+
+/**
  * Ask before a risky command. Returns a guard-event record, or null when the
  * command is not risky or the user approved it.
  */
@@ -1153,6 +1175,9 @@ async function guardCommand($, e) {
   if (!risks.length) return null;
 
   const reason = describeRisks(risks);
+  // Raise the notification before asking: the dialog is the thing the person
+  // may not be looking at, and `$.ui.ask` then holds until they answer.
+  await notifyGuard($, { reason, command: e.command });
   let answer = "Refuse";
   let asked = false;
   try {

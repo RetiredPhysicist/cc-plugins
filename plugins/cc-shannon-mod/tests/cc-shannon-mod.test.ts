@@ -17,6 +17,7 @@ function stubBase(
     fsExists?: (path: string) => boolean;
     fsList?: (path: string) => unknown[];
     settings?: () => unknown;
+    config?: () => string;
   } = {},
 ) {
   on("session.start", () => ({ cwd: overrides.cwd?.() ?? "/work" }));
@@ -30,6 +31,7 @@ function stubBase(
   // Config is read through the mods API, so both need an answer.
   on("env.get", () => ({ value: "/home/test" }));
   on("fs.read", () => {
+    if (overrides.config) return { value: overrides.config() };
     throw new Error("no config file");
   });
   on("fs.write", () => ({ value: undefined }));
@@ -324,6 +326,59 @@ test("the guard leaves an ordinary command alone", async ($, on) => {
 
   expect(asked.length).toBe(0);
   expect(result).toBeDefined();
+});
+
+test("the guard raises a native notification when the setting is on", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved, { config: () => JSON.stringify({ notify: true }) });
+  mock.clock(on);
+  const asked: string[] = [];
+  stubDialog(on, "Run it", asked);
+  const notices: string[] = [];
+  on("ui.notify", (_$, e: { text?: string } | string) => {
+    notices.push(typeof e === "string" ? e : String(e?.text ?? ""));
+    return { value: { isSent: true, channel: "terminal_bell" } };
+  });
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "rm -rf build" });
+
+  expect(notices.length).toBe(1);
+  expect(notices[0]).toContain("cc-shannon guard");
+  expect(notices[0]).toContain("rm -rf build");
+});
+
+test("no notification is raised when the setting is off", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved);
+  mock.clock(on);
+  const asked: string[] = [];
+  stubDialog(on, "Run it", asked);
+  const notices: string[] = [];
+  on("ui.notify", () => {
+    notices.push("called");
+    return { value: { isSent: true, channel: "terminal_bell" } };
+  });
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "rm -rf build" });
+
+  expect(notices.length).toBe(0);
+});
+
+test("a host that cannot notify still runs the guard", async ($, on) => {
+  const saved = new Map<string, unknown>();
+  stubBase(on, saved, { config: () => JSON.stringify({ notify: true }) });
+  mock.clock(on);
+  const asked: string[] = [];
+  stubDialog(on, "Run it", asked);
+  // No `ui.notify` handler at all: an older Claude Code with no such call.
+
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.tool.call({ tool: "Bash", command: "rm -rf build" });
+
+  // The guard still asked, and the approved command still ran.
+  expect(asked.length).toBe(1);
 });
 
 test("shannon-guard toggles the guard off", async ($, on) => {
