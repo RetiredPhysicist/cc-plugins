@@ -23,6 +23,12 @@
       "source": "./plugins/cc-shannon-bloom",
       "description": "A Gource-style film of a Claude Code session: projects as constellations, sessions lighting up, subagents branching, and tool calls flying as sparks.",
       "category": "interface"
+    },
+    {
+      "name": "cc-atuin",
+      "source": "./plugins/cc-atuin",
+      "description": "Record prompts and Bash commands into Atuin, and search them with /history.",
+      "category": "productivity"
     }
   ]
 }

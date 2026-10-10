@@ -1,0 +1,8 @@
+{
+  "name": "cc-atuin",
+  "description": "Atuin history for Claude Code: record prompts and bash into the Atuin database, then search it in a pane.",
+  "author": {
+    "name": "RetiredPhysicist",
+    "url": "https://github.com/RetiredPhysicist"
+  }
+}

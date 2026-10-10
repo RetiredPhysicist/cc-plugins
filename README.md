@@ -7,9 +7,8 @@ a plugin marketplace.
 | --- | --- |
 | [`cc-shannon-statusline`](./plugins/cc-shannon-statusline) | A live HUD under the prompt: project, model, context, throughput, tools, agents, and config counts |
 | [`cc-shannon-mod`](./plugins/cc-shannon-mod) | Mission control: measured turn timing, live activity, slowest-tool latency, a context runway, a prompt queue, a risky-command guard, a usage ledger, and a companion fed by green builds |
-
-Related: [`cc-atuin`](https://github.com/RetiredPhysicist/cc-atuin), kept in its own
-repository.
+| [`cc-shannon-bloom`](./plugins/cc-shannon-bloom) | A Gource-style film of the session: projects as constellations, subagents branching, tool calls flying as sparks |
+| [`cc-atuin`](./plugins/cc-atuin) | Atuin history for Claude Code: prompts and bash commands land in your shell's database, and `/history` searches it |
 
 ## Install
 
@@ -17,6 +16,8 @@ repository.
 claude plugin marketplace add RetiredPhysicist/cc-plugins
 claude plugin install cc-shannon-statusline@cc-plugins
 claude plugin install cc-shannon-mod@cc-plugins
+claude plugin install cc-shannon-bloom@cc-plugins
+claude plugin install cc-atuin@cc-plugins
 ```
 
 `cc-shannon-statusline` and `cc-shannon-mod` overlap on purpose but see different
@@ -32,6 +33,9 @@ Or add the marketplace once and install from `/plugin` in a session.
 
 ```bash
 claude plugin update cc-shannon-statusline@cc-plugins
+claude plugin update cc-shannon-mod@cc-plugins
+claude plugin update cc-shannon-bloom@cc-plugins
+claude plugin update cc-atuin@cc-plugins
 ```
 
 Then restart Claude Code, or run `/reload-plugins`. Plugins here carry no
