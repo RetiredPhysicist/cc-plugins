@@ -73,6 +73,23 @@ jobs:
         working-directory: plugins/cc-shannon-bloom
         run: npx --yes @anthropic-ai/claude-code@latest plugin test .
 
+  atuin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Unit tests
+        working-directory: plugins/cc-atuin
+        run: node --test test/*.test.mjs
+
+      - name: Mod tests
+        working-directory: plugins/cc-atuin
+        run: npx --yes @anthropic-ai/claude-code@latest plugin test .
+
   validate:
     runs-on: ubuntu-latest
     steps:
