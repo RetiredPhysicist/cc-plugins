@@ -16,7 +16,7 @@ Public repo: [`RetiredPhysicist/cc-plugins`](https://github.com/RetiredPhysicist
 ## Boundaries
 
 - This repo is **independent** from the Shannon GUI repo. Do **not** add any Shannon source/build refs here. Do **not** push or pull from any Shannon-related git remote.
-- Single remote: `origin → git@github.com:RetiredPhysicist/cc-plugins.git`. Verify with `git remote -v` before any push.
+- Single remote: `origin → github.com/RetiredPhysicist/cc-plugins`. Verify with `git remote -v` before any push.
 - Repo is **public**. Anything committed here is world-visible. No internal docs, no plans, no Shannon roadmap.
 
 ## Code map
@@ -45,7 +45,6 @@ src/
 | `bun run dev` | `tsc --watch` |
 | `bun run test:stdin` | end-to-end smoke with sample payload |
 | `bunx tsc --noEmit` | typecheck only |
-| `bun run sync:shannon` | build + copy `dist/` → `$SHANNON_DIR/src-tauri/resources/statusline-plugin/dist/` (defaults to `~/Desktop/Shannon`) |
 
 ## Conventions
 

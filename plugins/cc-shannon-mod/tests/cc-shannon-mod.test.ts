@@ -709,7 +709,7 @@ test("a turn refreshes the git row", async ($, on) => {
 
 test("the project row shortens the path the way the statusline does", async ($, on) => {
   const saved = new Map<string, unknown>();
-  stubBase(on, saved, { cwd: () => "/home/test/Documents/workbuddy/cc-plugins" });
+  stubBase(on, saved, { cwd: () => "/home/test/Documents/projects/cc-plugins" });
   mock.clock(on);
 
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
@@ -717,7 +717,7 @@ test("the project row shortens the path the way the statusline does", async ($, 
 
   const project = JSON.stringify(await ui.find({ key: "row-project" }));
   // `~` for home, then one initial per leading segment; the tail segment stays.
-  expect(project).toContain("~/D/w/cc-plugins");
+  expect(project).toContain("~/D/p/cc-plugins");
   expect(project).not.toContain("/home/test/Documents");
   await ui.unmount();
 });

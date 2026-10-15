@@ -1,7 +1,7 @@
 /**
  * Display-path shortening, shared in spirit with cc-shannon-statusline.
  *
- * The statusline writes `~/D/workbuddy/cc-plugins` from a full path: every
+ * The statusline writes `~/D/projects/cc-plugins` from a full path: every
  * leading segment collapses to its first character, and a `-` or `.` keeps the
  * character after it (`RetiredPhysicist` -> `R`, `cc-plugins` -> `c-p`). The mod
  * shows the same string so the two HUDs read alike.
