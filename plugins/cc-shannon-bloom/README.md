@@ -40,9 +40,9 @@ moves whether or not any event fired.
 │                        ●            ●                        │
 │              ◉ cc-plugins  ··◦•                              │
 │                    •            ·                           │
-│                          ◉ Kuiper                            │
+│                          ◉ atlas                             │
 │      ··◈··                    ●                              │
-│       ◉ Shannon                                              │
+│       ◉ beacon                                               │
 └──────────────────────────────────────────────────────────────┘
 ▁▁▂▃▅▇▅▃▂▁▁
 ```
