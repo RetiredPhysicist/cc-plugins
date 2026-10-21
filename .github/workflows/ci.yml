@@ -64,10 +64,11 @@ jobs:
     steps:
       - uses: useblacksmith/checkout@v1
 
+      # No `cache: npm`: this repo has no lockfile for setup-node to key on,
+      # and asking it to cache one fails the step outright.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-          cache: npm
 
       # `npx --yes ...@latest` ran in five separate steps, so the same large
       # CLI download happened five times per run. One install, then the local
