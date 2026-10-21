@@ -58,75 +58,53 @@ jobs:
           git --no-pager diff --stat -- dist
           exit 1
 
-  mod:
+  hooks:
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: useblacksmith/checkout@v1
 
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+          cache: npm
 
-      - name: Unit tests
+      # `npx --yes ...@latest` ran in five separate steps, so the same large
+      # CLI download happened five times per run. One install, then the local
+      # binary. Unpinned on purpose: these tests exist to catch what a new
+      # Claude Code breaks before a user hits it.
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@latest
+
+      - name: cc-shannon-mod — unit tests
         working-directory: plugins/cc-shannon-mod
         run: node --test test/*.test.mjs
 
-      - name: Mod tests
+      - name: cc-shannon-mod — plugin tests
         working-directory: plugins/cc-shannon-mod
-        run: npx --yes @anthropic-ai/claude-code@latest plugin test .
+        run: claude plugin test .
 
-  bloom:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - uses: useblacksmith/checkout@v1
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-
-      - name: Unit tests
+      - name: cc-shannon-bloom — unit tests
         working-directory: plugins/cc-shannon-bloom
         run: node --test test/*.test.mjs
 
-      - name: Mod tests
+      - name: cc-shannon-bloom — plugin tests
         working-directory: plugins/cc-shannon-bloom
-        run: npx --yes @anthropic-ai/claude-code@latest plugin test .
+        run: claude plugin test .
 
-  atuin:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - uses: useblacksmith/checkout@v1
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-
-      - name: Unit tests
+      - name: cc-atuin — unit tests
         working-directory: plugins/cc-atuin
         run: node --test test/*.test.mjs
 
-      - name: Mod tests
+      - name: cc-atuin — plugin tests
         working-directory: plugins/cc-atuin
-        run: npx --yes @anthropic-ai/claude-code@latest plugin test .
-
-  validate:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - uses: useblacksmith/checkout@v1
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
+        run: claude plugin test .
 
       # Not --strict: plugins here deliberately omit `version` so it tracks the
       # source commit SHA, which the strict check warns about.
       - name: Validate the marketplace and every plugin
         run: |
-          npx --yes @anthropic-ai/claude-code@latest plugin validate .
+          claude plugin validate .
           for dir in plugins/*/; do
-            npx --yes @anthropic-ai/claude-code@latest plugin validate "$dir"
+            claude plugin validate "$dir"
           done
