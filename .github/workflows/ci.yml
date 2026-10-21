@@ -68,7 +68,7 @@ jobs:
       # and asking it to cache one fails the step outright.
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
 
       # `npx --yes ...@latest` ran in five separate steps, so the same large
       # CLI download happened five times per run. One install, then the local
