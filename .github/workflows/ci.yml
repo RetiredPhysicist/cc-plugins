@@ -9,19 +9,34 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   statusline:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1
 
+      # package.json pins bun@1.4.2; `latest` overrode it, so CI and the
+      # developer machine could resolve different installs from the same lock.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.2
+
+      # A sticky disk mounts the package cache in ~3s with no size cap, which
+      # beats downloading the same tarballs on every run.
+      - name: Mount the Bun package cache
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-bun-cache
+          path: ~/.bun/install/cache
 
       - name: Install
         working-directory: plugins/cc-shannon-statusline
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Tests
         working-directory: plugins/cc-shannon-statusline
@@ -33,14 +48,19 @@ jobs:
         working-directory: plugins/cc-shannon-statusline
         run: |
           bun run build
-          if ! git diff --quiet -- dist; then
-            echo "dist/ is out of date; run 'bun run build' and commit the result" >&2
-            git --no-pager diff --stat -- dist
-            exit 1
+          # --quiet alone only inspects tracked files, so a build that emits a
+          # new or renamed chunk would pass. Compare the whole directory.
+          if ! git status --porcelain -- dist | grep -q .; then
+            exit 0
           fi
+          echo "dist/ is out of date; run 'bun run build' and commit the result" >&2
+          git status --porcelain -- dist
+          git --no-pager diff --stat -- dist
+          exit 1
 
   mod:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1
 
@@ -58,6 +78,7 @@ jobs:
 
   bloom:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1
 
@@ -75,6 +96,7 @@ jobs:
 
   atuin:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1
 
@@ -92,6 +114,7 @@ jobs:
 
   validate:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1
 
