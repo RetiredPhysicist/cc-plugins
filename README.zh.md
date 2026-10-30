@@ -115,6 +115,18 @@ cd cc-plugins
 
 `main` 和 pull request 上的 CI 跑这些检查，再对 marketplace 和每个插件跑 `claude plugin validate`。校验不用 `--strict`：缺 `version` 字段是故意的。
 
+## 发布
+
+**推荐（statusline 构建工具）：** 对 `plugins/cc-shannon-statusline`（目前唯一有 `package.json` 的目录）用 [Changesets](https://github.com/changesets/changesets)。在仓库根目录（先 `npm ci --workspaces=false`）：
+
+```bash
+npx changeset          # 选包与 bump 类型；把 .changeset/*.md 随 PR 提交
+```
+
+合并进 `main` 后，`.github/workflows/release.yml` 会开 **Version Packages** PR。再合并该 PR。该包为 `private`，**不会**发到 npm。本仓 Claude Code 插件仍故意不写 `version`；推到 `main` 仍是可安装修订（提交 SHA）。根目录 `package.json` 为 private，只为让 Changesets 发现该 workspace。
+
+本仓库没有 tag → npm 的 `publish.yml`。
+
 ## 许可证
 
 MIT。每个插件有自己的 `LICENSE`。

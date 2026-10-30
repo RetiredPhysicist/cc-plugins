@@ -115,6 +115,18 @@ cd cc-plugins
 
 CI on `main` and on pull requests runs those checks, then `claude plugin validate` on the marketplace and each plugin. Validation is not `--strict`: the missing `version` field is intentional.
 
+## Release
+
+**Preferred (statusline build tooling):** [Changesets](https://github.com/changesets/changesets) for `plugins/cc-shannon-statusline` (the only directory with a `package.json`). From the repo root (after `npm ci --workspaces=false`):
+
+```bash
+npx changeset          # pick packages + bump type; commit .changeset/*.md in your PR
+```
+
+On merge to `main`, `.github/workflows/release.yml` opens a **Version Packages** PR. Merge that PR. The package is `private` — nothing is published to npm. Claude Code marketplace plugins in this repo still omit `version` on purpose; a push to `main` remains the installable revision (commit SHA). The root `package.json` is private and only exists so Changesets can discover that workspace.
+
+There is no tag → npm `publish.yml` in this repository.
+
 ## License
 
 MIT. Each plugin has its own `LICENSE`.
