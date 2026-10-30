@@ -31,6 +31,13 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # package.json pins bun@1.4.2; statusline builds from bun.lock in
+      # script/changeset-publish.sh. Match ci.yml so Release does not fall
+      # through to npm ci without a package-lock.json.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
       # Workspaces exist so Changesets can discover plugins with package.json,
       # but each package still owns its own lockfile for CI. Install only the
       # root Changesets tooling here.
