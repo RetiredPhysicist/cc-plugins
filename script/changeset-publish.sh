@@ -14,9 +14,13 @@ for dir in "$root"/plugins/*/; do
     if [ -f "$dir/bun.lock" ] && command -v bun >/dev/null 2>&1; then
       (cd "$dir" && bun install --frozen-lockfile && bun run build)
     else
-      (cd "$dir" && npm ci --no-audit --no-fund && npm run build)
+      (cd "$dir" && npm ci --workspaces=false --no-audit --no-fund && npm run build)
     fi
   fi
 done
 
-exec npx changeset publish
+# Prefer the root-installed CLI; nested package installs must not wipe it
+if [ -x "$root/node_modules/.bin/changeset" ]; then
+  exec "$root/node_modules/.bin/changeset" publish
+fi
+exec npx --no-install changeset publish
