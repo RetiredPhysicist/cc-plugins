@@ -1,15 +1,16 @@
 # Dependabot: weekly grouped updates. Patch/minor/security auto-merged via workflow.
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directories:
-      - "/plugins/cc-shannon-statusline"
+  # cc-shannon-statusline is a Bun project (bun.lock); npm_and_yarn cannot
+  # update that lockfile.
+  - package-ecosystem: "bun"
+    directory: "/plugins/cc-shannon-statusline"
     schedule:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 10
     groups:
-      npm-dependencies:
+      bun-dependencies:
         patterns:
           - "*"
   - package-ecosystem: "github-actions"
