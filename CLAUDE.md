@@ -6,12 +6,9 @@ omit `version` on purpose — the installable revision is the commit SHA.
 
 ## Release / version
 
-Preferred for the statusline package: Changesets from the repo root
-(`npm ci --workspaces=false`, then `npx changeset`). Merging to `main` lets
-`.github/workflows/release.yml` open a Version Packages PR. The package stays
-private — no npm publish.
-
-Other plugins: push to `main` is the release.
+Push to `main` is the release. `cc-shannon-statusline` stays private and is
+never published to npm; bump its `package.json` version by hand when the
+committed `dist/` changes.
 
 ## Checks
 

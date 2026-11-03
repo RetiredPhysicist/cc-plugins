@@ -117,13 +117,7 @@ CI on `main` and on pull requests runs those checks, then `claude plugin validat
 
 ## Release
 
-**Preferred (statusline build tooling):** [Changesets](https://github.com/changesets/changesets) for `plugins/cc-shannon-statusline` (the only directory with a `package.json`). From the repo root (after `npm ci --workspaces=false`):
-
-```bash
-npx changeset          # pick packages + bump type; commit .changeset/*.md in your PR
-```
-
-On merge to `main`, `.github/workflows/release.yml` opens a **Version Packages** PR. Merge that PR. The package is `private` — nothing is published to npm. Claude Code marketplace plugins in this repo still omit `version` on purpose; a push to `main` remains the installable revision (commit SHA). The root `package.json` is private and only exists so Changesets can discover that workspace.
+A push to `main` is the release. Claude Code marketplace plugins omit `version` on purpose — the installable revision is the commit SHA. `plugins/cc-shannon-statusline` is `private` build tooling and is never published to npm; bump its `package.json` version by hand when the committed `dist/` changes.
 
 There is no tag → npm `publish.yml` in this repository.
 

@@ -117,13 +117,7 @@ cd cc-plugins
 
 ## 发布
 
-**推荐（statusline 构建工具）：** 对 `plugins/cc-shannon-statusline`（目前唯一有 `package.json` 的目录）用 [Changesets](https://github.com/changesets/changesets)。在仓库根目录（先 `npm ci --workspaces=false`）：
-
-```bash
-npx changeset          # 选包与 bump 类型；把 .changeset/*.md 随 PR 提交
-```
-
-合并进 `main` 后，`.github/workflows/release.yml` 会开 **Version Packages** PR。再合并该 PR。该包为 `private`，**不会**发到 npm。本仓 Claude Code 插件仍故意不写 `version`；推到 `main` 仍是可安装修订（提交 SHA）。根目录 `package.json` 为 private，只为让 Changesets 发现该 workspace。
+推到 `main` 即发布。Claude Code 插件故意不写 `version`，可安装修订就是提交 SHA。`plugins/cc-shannon-statusline` 是 private 构建工具，**不会**发到 npm；committed `dist/` 变化时手动改它的 `package.json` 版本。
 
 本仓库没有 tag → npm 的 `publish.yml`。
 
